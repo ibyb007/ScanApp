@@ -5,7 +5,6 @@ import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
@@ -35,7 +34,7 @@ class DocumentScannerLauncher(
 
     private val scanner = GmsDocumentScanning.getClient(scannerOptions)
 
-    private lateinit var launcher: ActivityResultLauncher<android.content.Intent>
+    private lateinit var launcher: ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>
 
     init {
         launcher = activity.registerForActivityResult(
