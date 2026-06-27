@@ -15,16 +15,22 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
  * This launches Google's built-in scanning UI: live edge detection, auto-capture,
  * manual crop adjustment, multi-page support, and basic filters (auto/photo/mono).
  * We just register a launcher and hand back the result.
+ *
+ * @param pageLimit max pages in one scan session. Use a high limit (e.g. 20) for
+ *   "scan a new document"; use 1 for "re-scan this single existing page" (the
+ *   page-editor's Re-scan action), since GmsDocumentScannerOptions is immutable
+ *   once built and each distinct page limit needs its own scanner client.
  */
 class DocumentScannerLauncher(
     private val activity: ComponentActivity,
     private val onResult: (List<Uri>) -> Unit,
-    private val onError: (Exception) -> Unit
+    private val onError: (Exception) -> Unit,
+    pageLimit: Int = 20
 ) {
 
     private val scannerOptions = GmsDocumentScannerOptions.Builder()
         .setGalleryImportAllowed(true)          // let user import existing photos too
-        .setPageLimit(20)                        // multi-page like Drive's scanner
+        .setPageLimit(pageLimit)
         .setResultFormats(
             GmsDocumentScannerOptions.RESULT_FORMAT_JPEG, // we want raw pages, we'll build our own PDF
             GmsDocumentScannerOptions.RESULT_FORMAT_PDF
