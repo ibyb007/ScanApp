@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -50,4 +51,9 @@ dependencies {
 
     // Image loading for thumbnail previews (rememberAsyncImagePainter)
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Room (persistent scan library: titles, thumbnails, page counts, dates)
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")
 }
