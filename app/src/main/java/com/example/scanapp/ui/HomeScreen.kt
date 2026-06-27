@@ -1,20 +1,25 @@
 package com.example.scanapp.ui
 
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +29,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
+import com.example.scanapp.export.OutputFormat
 
 /** One saved scan shown in the Recents list. */
 data class RecentDocument(
@@ -39,9 +45,16 @@ data class RecentDocument(
 fun HomeScreen(
     recentDocuments: List<RecentDocument>,
     onScanClick: () -> Unit,
-    onDocumentClick: (RecentDocument) -> Unit
+    onDocumentClick: (RecentDocument) -> Unit,
+    onRename: (RecentDocument, newTitle: String) -> Unit = { _, _ -> },
+    onDelete: (RecentDocument) -> Unit = {},
+    onShare: (RecentDocument, OutputFormat) -> Unit = { _, _ -> }
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var actionSheetTarget by remember { mutableStateOf<RecentDocument?>(null) }
+    var renameTarget by remember { mutableStateOf<RecentDocument?>(null) }
+    var deleteTarget by remember { mutableStateOf<RecentDocument?>(null) }
+    var shareTarget by remember { mutableStateOf<RecentDocument?>(null) }
 
     Scaffold(
         bottomBar = { ScanAppBottomNav() },
@@ -94,21 +107,66 @@ fun HomeScreen(
             } else {
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(recentDocuments, key = { it.id }) { doc ->
-                        RecentDocumentRow(doc = doc, onClick = { onDocumentClick(doc) })
+                        RecentDocumentRow(
+                            doc = doc,
+                            onClick = { onDocumentClick(doc) },
+                            onLongClick = { actionSheetTarget = doc }
+                        )
                         HorizontalDivider(modifier = Modifier.padding(start = 96.dp))
                     }
                 }
             }
         }
     }
+
+    actionSheetTarget?.let { doc ->
+        DocumentActionSheet(
+            onDismiss = { actionSheetTarget = null },
+            onRenameClick = { actionSheetTarget = null; renameTarget = doc },
+            onDeleteClick = { actionSheetTarget = null; deleteTarget = doc },
+            onShareClick = { actionSheetTarget = null; shareTarget = doc }
+        )
+    }
+
+    renameTarget?.let { doc ->
+        RenameDialog(
+            currentTitle = doc.title,
+            onConfirm = { newTitle -> renameTarget = null; onRename(doc, newTitle) },
+            onDismiss = { renameTarget = null }
+        )
+    }
+
+    deleteTarget?.let { doc ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete document?") },
+            text = { Text("This will permanently delete \"${doc.title}\" and all its pages.") },
+            confirmButton = {
+                TextButton(onClick = { deleteTarget = null; onDelete(doc) }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    shareTarget?.let { doc ->
+        ShareFormatSheet(
+            onFormatSelected = { format -> shareTarget = null; onShare(doc, format) },
+            onDismiss = { shareTarget = null }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecentDocumentRow(doc: RecentDocument, onClick: () -> Unit) {
+private fun RecentDocumentRow(doc: RecentDocument, onClick: () -> Unit, onLongClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -186,6 +244,72 @@ private fun ScanAppBottomNav() {
                 onClick = { selected = index },
                 icon = { Icon(icon, contentDescription = label) },
                 label = { Text(label) }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DocumentActionSheet(
+    onDismiss: () -> Unit,
+    onRenameClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    onShareClick: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(bottom = 24.dp)) {
+            ListItem(
+                headlineContent = { Text("Share") },
+                leadingContent = { Icon(Icons.Filled.Share, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onShareClick)
+            )
+            ListItem(
+                headlineContent = { Text("Rename") },
+                leadingContent = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onRenameClick)
+            )
+            ListItem(
+                headlineContent = { Text("Delete") },
+                leadingContent = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onDeleteClick)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RenameDialog(currentTitle: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember(currentTitle) { mutableStateOf(currentTitle) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename document") },
+        text = {
+            OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true)
+        },
+        confirmButton = {
+            TextButton(onClick = { if (text.isNotBlank()) onConfirm(text) }) { Text("Rename") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ShareFormatSheet(onFormatSelected: (OutputFormat) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(16.dp).padding(bottom = 24.dp)) {
+            Text("Share as", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(12.dp))
+            ListItem(
+                headlineContent = { Text("PDF") },
+                supportingContent = { Text("All pages combined into one PDF") },
+                modifier = Modifier.clickable { onFormatSelected(OutputFormat.PDF) }
+            )
+            ListItem(
+                headlineContent = { Text("JPEG images") },
+                supportingContent = { Text("Each page as a separate image") },
+                modifier = Modifier.clickable { onFormatSelected(OutputFormat.JPEG) }
             )
         }
     }
