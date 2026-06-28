@@ -36,7 +36,7 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon -PbuildNumber=${{ github.run_number }}
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
@@ -53,12 +53,17 @@ jobs:
       # directly from the Releases page, not just from a logged-in Actions run.
       - name: Build release APK
         if: github.event_name == 'push'
-        run: gradle assembleRelease --no-daemon
+        run: gradle assembleRelease --no-daemon -PbuildNumber=${{ github.run_number }}
 
       - name: Generate release tag
         if: github.event_name == 'push'
         id: tag
-        run: echo "tag=build-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+        # Tagged as v1.0.<run_number> to match the APK's own versionName
+        # exactly (see app/build.gradle.kts). UpdateChecker compares this tag
+        # directly against BuildConfig.VERSION_NAME, so the two must agree —
+        # they used to be unrelated strings ("build-N" vs "1.0"), which is why
+        # the in-app update check could never detect a newer release.
+        run: echo "tag=v1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         if: github.event_name == 'push'
