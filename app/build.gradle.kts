@@ -5,6 +5,20 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// versionCode/versionName are derived from a build number instead of being
+// hardcoded. Every previous build shipped versionCode=1, versionName="1.0" —
+// identical on every release — which is why Android's package manager
+// refused to install a new build over an old one (it looked like the *same*
+// version, not an update) without uninstalling first.
+//
+// The CI workflow passes -PbuildNumber=<run_number> on every build, so each
+// GitHub Actions run produces a strictly increasing versionCode and a
+// distinct versionName (e.g. "1.0.47"). Local builds (no -P flag) fall back
+// to buildNumber 1, so `./gradlew assembleDebug` on your machine still works
+// without extra setup — it just won't be installable *over* a CI build with a
+// higher versionCode (expected: it's a genuinely older/different version).
+val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
+
 android {
     namespace = "com.example.scanapp"
     compileSdk = 35
@@ -13,8 +27,8 @@ android {
         applicationId = "com.example.scanapp"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = buildNumber
+        versionName = "1.0.$buildNumber"
     }
 
     buildFeatures {
