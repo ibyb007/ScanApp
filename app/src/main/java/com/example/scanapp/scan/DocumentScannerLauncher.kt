@@ -19,8 +19,9 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
  * @param pageLimit max pages in one scan session. Use a high limit (e.g. 100) for
  *   "scan a new document" — ML Kit's scanner UI already supports continuous batch
  *   capture (auto-capture, thumbnail strip, keep-scanning-or-finish), so this just
- *   raises the ceiling rather than building a custom flow; use 1 for "re-scan this
- *   single existing page" (the page-editor's Re-scan action), since
+ *   raises the ceiling rather than building a custom flow; use 1 for "edit this
+ *   single existing page via ML Kit's own UI" (Filters/Crop/Clean), launched from
+ *   the document detail screen via TempGalleryExport + gallery import, since
  *   GmsDocumentScannerOptions is immutable once built and each distinct page limit
  *   needs its own scanner client.
  */
