@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -67,31 +70,70 @@ fun SettingsScreen(
                 headlineContent = { Text("Check for update") },
                 supportingContent = {
                     Text(
-                        when (updateStatus) {
+                        text = when (updateStatus) {
                             UpdateCheckUiStatus.IDLE -> "Tap to check for the latest version"
                             UpdateCheckUiStatus.CHECKING -> "Checking…"
                             UpdateCheckUiStatus.UP_TO_DATE -> "You're on the latest version"
                             UpdateCheckUiStatus.UPDATE_AVAILABLE -> updateStatusMessage ?: "A new version is available"
                             UpdateCheckUiStatus.ERROR -> updateStatusMessage ?: "Couldn't check for updates"
+                        },
+                        color = when (updateStatus) {
+                            UpdateCheckUiStatus.UPDATE_AVAILABLE -> MaterialTheme.colorScheme.primary
+                            UpdateCheckUiStatus.ERROR -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                     )
                 },
                 leadingContent = {
-                    if (updateStatus == UpdateCheckUiStatus.CHECKING) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Filled.Refresh, contentDescription = null)
+                    // One icon, swapped per state — never more than one
+                    // loading/status indicator visible on this row at a time.
+                    when (updateStatus) {
+                        UpdateCheckUiStatus.CHECKING -> {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
+                        UpdateCheckUiStatus.UP_TO_DATE -> {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        UpdateCheckUiStatus.UPDATE_AVAILABLE -> {
+                            Icon(
+                                Icons.Filled.NewReleases,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        UpdateCheckUiStatus.ERROR -> {
+                            Icon(
+                                Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        UpdateCheckUiStatus.IDLE -> {
+                            Icon(Icons.Filled.Refresh, contentDescription = null)
+                        }
                     }
                 },
                 trailingContent = {
-                    if (updateStatus == UpdateCheckUiStatus.UPDATE_AVAILABLE) {
-                        TextButton(onClick = onOpenReleaseClick) { Text("View") }
-                    } else {
-                        IconButton(
-                            onClick = onCheckForUpdateClick,
-                            enabled = updateStatus != UpdateCheckUiStatus.CHECKING
-                        ) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Check now")
+                    when (updateStatus) {
+                        UpdateCheckUiStatus.UPDATE_AVAILABLE -> {
+                            Button(onClick = onOpenReleaseClick) { Text("Update") }
+                        }
+                        UpdateCheckUiStatus.CHECKING -> {
+                            // No trailing icon while checking — the leading
+                            // spinner is already the single loading indicator
+                            // for this row. Previously a refresh IconButton
+                            // (merely disabled, not hidden) sat here too, so
+                            // the row showed what looked like two separate
+                            // loading spinners side by side during a check.
+                        }
+                        else -> {
+                            IconButton(onClick = onCheckForUpdateClick) {
+                                Icon(Icons.Filled.Refresh, contentDescription = "Check now")
+                            }
                         }
                     }
                 },
