@@ -6,6 +6,46 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 
+/**
+ * Standard output paper sizes for a collage canvas, in pixels at a fixed
+ * working resolution (150dpi — sharp enough for on-screen preview and for
+ * printing/sharing as a PDF page, without the multi-thousand-pixel canvases
+ * a higher DPI would need for a feature that's compositing already-compressed
+ * scan JPEGs, not the original 4:3/under camera capture).
+ *
+ * Each entry stores its physical dimensions in inches (the part a person
+ * actually picks by name) plus the pixel size derived from them, so adding a
+ * new size later is just one line with the inches for that paper standard.
+ */
+enum class CollagePageSize(
+    val displayName: String,
+    val widthInches: Float,
+    val heightInches: Float
+) {
+    A4("A4", 8.27f, 11.69f),
+    A5("A5", 5.83f, 8.27f),
+    LETTER("Letter", 8.5f, 11f),
+    LEGAL("Legal", 8.5f, 14f),
+    SQUARE("Square", 8.5f, 8.5f);
+
+    companion object {
+        const val WORKING_DPI = 150
+    }
+
+    val widthPx: Int get() = (widthInches * WORKING_DPI).toInt()
+    val heightPx: Int get() = (heightInches * WORKING_DPI).toInt()
+}
+
+/** Page orientation — swaps width/height of whatever [CollagePageSize] is chosen. */
+enum class CollageOrientation { PORTRAIT, LANDSCAPE }
+
+/** The effective canvas pixel size for a given page size + orientation pair. */
+fun CollagePageSize.canvasPx(orientation: CollageOrientation): Pair<Int, Int> =
+    when (orientation) {
+        CollageOrientation.PORTRAIT -> widthPx to heightPx
+        CollageOrientation.LANDSCAPE -> heightPx to widthPx
+    }
+
 /** One cell's position within the collage canvas, in normalized [0,1] coordinates. */
 data class CollageCell(val rect: RectF)
 
