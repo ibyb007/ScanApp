@@ -13,6 +13,8 @@ import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import com.example.scanapp.data.DocumentEntity
 import com.example.scanapp.data.DocumentRepository
+import com.example.scanapp.data.DocumentSortBy
+import com.example.scanapp.data.SortDirection
 import com.example.scanapp.edit.PageEditorScreen
 import com.example.scanapp.export.ExportEngine
 import com.example.scanapp.export.ExportOptions
@@ -26,6 +28,7 @@ import com.example.scanapp.ui.HomeScreen
 import com.example.scanapp.ui.RecentDocument
 import com.example.scanapp.ui.ScanScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -47,6 +50,9 @@ class MainActivity : ComponentActivity() {
     private var isExporting by mutableStateOf(false)
     private var exportResultText by mutableStateOf<String?>(null)
     private var recentDocuments by mutableStateOf<List<RecentDocument>>(emptyList())
+    private var homeSearchQuery by mutableStateOf("")
+    private var homeSortBy by mutableStateOf(DocumentSortBy.DATE_MODIFIED)
+    private var homeSortDirection by mutableStateOf(SortDirection.DESCENDING)
 
     // Currently-open document (DETAIL/PAGE_EDITOR screens) and page (PAGE_EDITOR only).
     private var openDocumentId by mutableStateOf<Long?>(null)
@@ -75,7 +81,7 @@ class MainActivity : ComponentActivity() {
             activity = this,
             onResult = { uris -> onScanCompleted(uris) },
             onError = { e -> exportResultText = "Scan failed: ${e.message}" },
-            pageLimit = 20
+            pageLimit = 100
         )
         singlePageScannerLauncher = DocumentScannerLauncher(
             activity = this,
@@ -97,7 +103,13 @@ class MainActivity : ComponentActivity() {
                     onShare = { doc, format ->
     val documentId = doc.id.toLongOrNull() ?: return@HomeScreen
     shareDocument(documentId, doc.title, format)
-                    }
+                    },
+                    onDeleteMultiple = { docs -> deleteMultipleDocuments(docs) },
+                    searchQuery = homeSearchQuery,
+                    onSearchQueryChange = { query -> onHomeSearchQueryChange(query) },
+                    sortBy = homeSortBy,
+                    sortDirection = homeSortDirection,
+                    onSortChange = { sortBy, direction -> onHomeSortChange(sortBy, direction) }
                 )
                 Screen.DETAIL -> {
                     val documentId = openDocumentId
@@ -147,13 +159,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Keeps recentDocuments in sync with the database, including thumbnails. */
+    private var libraryObserverJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Keeps recentDocuments in sync with the database, including thumbnails,
+     * filtered by the current search query and ordered by the current sort.
+     * Restarted (old collection cancelled) whenever query/sort change, since
+     * this is a plain Activity rather than a ViewModel with combine() available
+     * across multiple StateFlows.
+     */
     private fun observeLibrary() {
-        lifecycleScope.launch {
-            repository.observeAllDocuments().collect { documents ->
-                recentDocuments = documents.map { doc -> toRecentDocument(doc) }
+        libraryObserverJob?.cancel()
+        libraryObserverJob = lifecycleScope.launch {
+            repository.observeDocuments(homeSearchQuery, homeSortBy, homeSortDirection).collectLatest { documents ->
+                val mapped = documents.map { doc -> toRecentDocument(doc) }
+                recentDocuments = if (homeSortBy == DocumentSortBy.PAGE_COUNT) {
+                    // Page-count sort isn't expressible in the DAO's simple queries
+                    // (would need a join against document_pages), so it's applied
+                    // here once page counts are already known from toRecentDocument.
+                    if (homeSortDirection == SortDirection.DESCENDING) {
+                        mapped.sortedByDescending { it.pageCount }
+                    } else {
+                        mapped.sortedBy { it.pageCount }
+                    }
+                } else {
+                    mapped
+                }
             }
         }
+    }
+
+    private fun onHomeSearchQueryChange(query: String) {
+        homeSearchQuery = query
+        observeLibrary()
+    }
+
+    private fun onHomeSortChange(sortBy: DocumentSortBy, direction: SortDirection) {
+        homeSortBy = sortBy
+        homeSortDirection = direction
+        observeLibrary()
     }
 
     private suspend fun toRecentDocument(doc: DocumentEntity): RecentDocument {
@@ -166,7 +210,8 @@ class MainActivity : ComponentActivity() {
             subtitle = "Modified: ${dateFormat.format(Date(doc.modifiedAtMillis))} · $pageCount page" +
                 if (pageCount == 1) "" else "s",
             thumbnailUri = thumbPath?.let { File(it).toUri() },
-            pageCount = pageCount
+            pageCount = pageCount,
+            modifiedAtMillis = doc.modifiedAtMillis
         )
     }
 
@@ -296,6 +341,15 @@ class MainActivity : ComponentActivity() {
     private fun deleteDocument(doc: RecentDocument) {
         val documentId = doc.id.toLongOrNull() ?: return
         lifecycleScope.launch { repository.deleteDocument(documentId) }
+    }
+
+    /** Deletes every selected document from the Home screen's multi-select batch action. */
+    private fun deleteMultipleDocuments(docs: List<RecentDocument>) {
+        val ids = docs.mapNotNull { it.id.toLongOrNull() }
+        if (ids.isEmpty()) return
+        lifecycleScope.launch {
+            ids.forEach { id -> repository.deleteDocument(id) }
+        }
     }
 
     /**
