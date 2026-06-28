@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -29,6 +30,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -120,7 +123,11 @@ fun HomeScreen(
                 )
             }
         },
-        bottomBar = { ScanAppBottomNav(onMeClick = onMeClick, onToolsClick = onToolsClick) },
+        bottomBar = {
+            Box(modifier = Modifier.background(Color.Transparent)) {
+                ScanAppBottomNav(onMeClick = onMeClick, onToolsClick = onToolsClick)
+            }
+        },
         floatingActionButton = {
             if (!selectionMode) {
                 FloatingActionButton(onClick = onScanClick) {
@@ -437,6 +444,18 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier, isSearching: Boolea
     }
 }
 
+/**
+ * Floating, frosted-glass-styled bottom nav: an inset pill rather than an
+ * edge-to-edge bar, with a translucent layered surface to suggest glass.
+ *
+ * True backdrop blur (blurring the page content showing *through* the bar)
+ * needs Android 12+ RenderEffect APIs or a third-party blur library — neither
+ * is worth pulling in for one visual flourish on an app with minSdk 24, where
+ * it would either silently do nothing pre-31 or need a new dependency. This
+ * gets the same frosted-glass identity — translucency, a soft top highlight,
+ * a hairline border catching the light — through layered semi-transparent
+ * surfaces, which is what most "glass" UIs render as in practice anyway.
+ */
 @Composable
 private fun ScanAppBottomNav(onMeClick: () -> Unit = {}, onToolsClick: () -> Unit = {}) {
     var selected by remember { mutableStateOf(0) }
@@ -446,25 +465,115 @@ private fun ScanAppBottomNav(onMeClick: () -> Unit = {}, onToolsClick: () -> Uni
         Triple("Tools", Icons.Filled.Description, 2),
         Triple("Me", Icons.Filled.Person, 3)
     )
-    NavigationBar {
-        items.forEach { (label, icon, index) ->
-            NavigationBarItem(
-                selected = selected == index,
-                onClick = {
-                    // Home/Files remain visual-only placeholders for now; Tools
-                    // opens the collage builder and Me opens Settings — both
-                    // navigate away immediately, so we don't persist them as
-                    // the "selected" tab the way a real destination would.
-                    when (index) {
-                        2 -> onToolsClick()
-                        3 -> onMeClick()
-                        else -> selected = index
-                    }
-                },
-                icon = { Icon(icon, contentDescription = label) },
-                label = { Text(label) }
-            )
+
+    val glassColor = MaterialTheme.colorScheme.surface
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(32.dp))
+                // Frosted base fill: translucent rather than opaque, so
+                // whatever's behind (content scrolled under the floating bar)
+                // still tints through faintly.
+                .background(glassColor.copy(alpha = 0.72f))
+                // Soft vertical sheen, brighter near the top edge — the part
+                // of a glass pane that catches the most light — fading by
+                // the bottom, which is what reads as "glass" rather than
+                // just "a translucent rectangle."
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.16f),
+                            Color.White.copy(alpha = 0.02f),
+                            Color.Black.copy(alpha = 0.04f)
+                        )
+                    )
+                )
+                .border(
+                    width = 1.dp,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.35f),
+                            Color.White.copy(alpha = 0.05f)
+                        )
+                    ),
+                    shape = RoundedCornerShape(32.dp)
+                ),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items.forEach { (label, icon, index) ->
+                GlassNavItem(
+                    label = label,
+                    icon = icon,
+                    selected = selected == index,
+                    onClick = {
+                        // Home/Files remain visual-only placeholders for now;
+                        // Tools opens the collage builder and Me opens
+                        // Settings — both navigate away immediately, so we
+                        // don't persist them as the "selected" tab the way a
+                        // real destination would.
+                        when (index) {
+                            2 -> onToolsClick()
+                            3 -> onMeClick()
+                            else -> selected = index
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun GlassNavItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(24.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = if (selected) {
+                Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                    .padding(horizontal = 18.dp, vertical = 4.dp)
+            } else {
+                Modifier.padding(horizontal = 18.dp, vertical = 4.dp)
+            }
+        ) {
+            Icon(icon, contentDescription = label, tint = contentColor, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+        )
     }
 }
 
