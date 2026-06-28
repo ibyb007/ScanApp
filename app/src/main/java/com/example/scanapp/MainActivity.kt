@@ -1,7 +1,6 @@
 package com.example.scanapp
 
 import android.content.Intent
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
@@ -15,12 +14,12 @@ import com.example.scanapp.data.DocumentEntity
 import com.example.scanapp.data.DocumentRepository
 import com.example.scanapp.data.DocumentSortBy
 import com.example.scanapp.data.SortDirection
-import com.example.scanapp.edit.PageEditorScreen
 import com.example.scanapp.export.ExportEngine
 import com.example.scanapp.export.ExportOptions
 import com.example.scanapp.export.OutputFormat
 import com.example.scanapp.export.PublicDocumentSaver
 import com.example.scanapp.scan.DocumentScannerLauncher
+import com.example.scanapp.scan.TempGalleryExport
 import com.example.scanapp.ui.DetailPage
 import com.example.scanapp.ui.DocumentDetailScreen
 import com.example.scanapp.ui.ExportUiState
@@ -36,7 +35,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class Screen { HOME, DETAIL, PAGE_EDITOR, SCAN_EXPORT, SETTINGS }
+private enum class Screen { HOME, DETAIL, SCAN_EXPORT, SETTINGS, COLLAGE }
 
 class MainActivity : ComponentActivity() {
 
@@ -57,11 +56,18 @@ class MainActivity : ComponentActivity() {
     private var updateStatusMessage by mutableStateOf<String?>(null)
     private var latestReleaseUrl by mutableStateOf<String?>(null)
 
-    // Currently-open document (DETAIL/PAGE_EDITOR screens) and page (PAGE_EDITOR only).
+    // Currently-open document (DETAIL screen).
     private var openDocumentId by mutableStateOf<Long?>(null)
     private var openDocumentTitle by mutableStateOf("")
     private var openDocumentPages by mutableStateOf<List<DetailPage>>(emptyList())
-    private var editingPage by mutableStateOf<DetailPage?>(null)
+
+    // Collage screen state.
+    private var collagePickerPages by mutableStateOf<List<com.example.scanapp.ui.CollagePickerPage>>(emptyList())
+    private var collagePreviewBitmap by mutableStateOf<android.graphics.Bitmap?>(null)
+    private var isComposingCollage by mutableStateOf(false)
+    private var collageSelectedPageIds: List<Long> = emptyList()
+    private var collageSelectedTemplate: com.example.scanapp.collage.CollageTemplate =
+        com.example.scanapp.collage.CollageTemplates.ALL.first()
 
     /**
      * The scanner launcher is reused for three distinct flows (new document,
@@ -113,7 +119,8 @@ class MainActivity : ComponentActivity() {
                     sortBy = homeSortBy,
                     sortDirection = homeSortDirection,
                     onSortChange = { sortBy, direction -> onHomeSortChange(sortBy, direction) },
-                    onMeClick = { currentScreen = Screen.SETTINGS }
+                    onMeClick = { currentScreen = Screen.SETTINGS },
+                    onToolsClick = { openCollageScreen() }
                 )
                 Screen.DETAIL -> {
                     val documentId = openDocumentId
@@ -128,24 +135,10 @@ class MainActivity : ComponentActivity() {
                             onDelete = { deleteOpenDocument(documentId) },
                             onShare = { format -> shareDocument(documentId, openDocumentTitle, format) },
                             onExportClick = { openExportScreenForOpenDocument() },
-                            onPageClick = { page -> editingPage = page; currentScreen = Screen.PAGE_EDITOR },
+                            onPageClick = { page -> launchPageEditViaMlKit(documentId, page) },
                             onAddPagesClick = { launchAddPagesScan(documentId) },
                             onDeletePage = { page -> deletePageFromOpenDocument(documentId, page) },
                             onReorder = { orderedIds -> reorderOpenDocumentPages(documentId, orderedIds) }
-                        )
-                    }
-                }
-                Screen.PAGE_EDITOR -> {
-                    val page = editingPage
-                    val documentId = openDocumentId
-                    if (page == null || documentId == null) {
-                        currentScreen = Screen.DETAIL
-                    } else {
-                        PageEditorScreen(
-                            pageFilePath = page.uri.path ?: "",
-                            onSave = { editedBitmap -> savePageEdit(documentId, page.pageId, editedBitmap) },
-                            onRescanRequested = { launchPageRescan(documentId, page.pageId) },
-                            onCancel = { currentScreen = Screen.DETAIL }
                         )
                     }
                 }
@@ -171,6 +164,16 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onBackClick = { currentScreen = Screen.HOME }
+                )
+                Screen.COLLAGE -> com.example.scanapp.ui.CollageScreen(
+                    allPages = collagePickerPages,
+                    previewBitmap = collagePreviewBitmap,
+                    isComposing = isComposingCollage,
+                    onBackClick = { currentScreen = Screen.HOME },
+                    onSelectionOrTemplateChanged = { pageIds, template ->
+                        updateCollagePreview(pageIds, template)
+                    },
+                    onSaveClick = { saveCollageAsNewDocument() }
                 )
             }
         }
@@ -264,17 +267,92 @@ class MainActivity : ComponentActivity() {
                 }
             }
             is PendingScan.ReplacePage -> {
-                // Re-scan returns a fresh page image; treat its first result as
-                // the replacement bitmap for the page being edited.
+                // The user edited (Filters/Crop/Clean) the temp gallery copy of this
+                // page inside ML Kit's own UI; treat its first result as the
+                // replacement image for the page being edited.
                 lifecycleScope.launch {
                     val bitmap = withContext(Dispatchers.IO) {
                         contentResolver.openInputStream(uris.first())?.use { BitmapFactory.decodeStream(it) }
-                    } ?: return@launch
-                    repository.replacePageImage(pending.documentId, pending.pageId, bitmap)
-                    refreshOpenDocument(pending.documentId)
+                    }
+                    if (bitmap != null) {
+                        repository.replacePageImage(pending.documentId, pending.pageId, bitmap)
+                        refreshOpenDocument(pending.documentId)
+                    }
                     currentScreen = Screen.DETAIL
+                    // Clean up the temp gallery copy now that ML Kit is done with it —
+                    // whether or not the user actually completed the edit, we don't
+                    // want scratch copies permanently littering their real Photos.
+                    withContext(Dispatchers.IO) { TempGalleryExport.cleanupAllTempCopies(applicationContext) }
                 }
             }
+        }
+    }
+
+    /** Loads every page across the whole library and opens the collage builder. */
+    private fun openCollageScreen() {
+        lifecycleScope.launch {
+            val pages = withContext(Dispatchers.IO) { repository.getAllPagesForPicker() }
+            collagePickerPages = pages.map { withTitle ->
+                com.example.scanapp.ui.CollagePickerPage(
+                    pageId = withTitle.page.id,
+                    uri = File(withTitle.page.filePath).toUri(),
+                    documentTitle = withTitle.documentTitle
+                )
+            }
+            collagePreviewBitmap = null
+            collageSelectedPageIds = emptyList()
+            currentScreen = Screen.COLLAGE
+        }
+    }
+
+    /**
+     * Re-composes the live preview whenever the user changes their page
+     * selection or template. Runs on a background dispatcher since decoding
+     * several full-res page bitmaps + compositing isn't free, but is fast
+     * enough (a handful of JPEGs, fixed output canvas size) to redo on every
+     * change without needing debouncing for a reasonable number of pages.
+     */
+    private fun updateCollagePreview(
+        selectedPageIds: List<Long>,
+        template: com.example.scanapp.collage.CollageTemplate
+    ) {
+        collageSelectedPageIds = selectedPageIds
+        collageSelectedTemplate = template
+
+        if (selectedPageIds.isEmpty()) {
+            collagePreviewBitmap = null
+            return
+        }
+
+        lifecycleScope.launch {
+            isComposingCollage = true
+            val result = withContext(Dispatchers.IO) {
+                val pageById = collagePickerPages.associateBy { it.pageId }
+                val bitmaps = selectedPageIds.mapNotNull { id ->
+                    pageById[id]?.uri?.path?.let { path -> BitmapFactory.decodeFile(path) }
+                }
+                if (bitmaps.isEmpty()) {
+                    null
+                } else {
+                    com.example.scanapp.collage.CollageCompositor.compose(
+                        pages = bitmaps,
+                        template = template,
+                        canvasWidthPx = 1200,
+                        canvasHeightPx = 1600
+                    )
+                }
+            }
+            collagePreviewBitmap = result
+            isComposingCollage = false
+        }
+    }
+
+    private fun saveCollageAsNewDocument() {
+        val bitmap = collagePreviewBitmap ?: return
+        lifecycleScope.launch {
+            val title = "Collage ${SimpleDateFormat("MM-dd-yyyy HH.mm", Locale.getDefault()).format(Date())}"
+            repository.saveBitmapAsNewDocument(bitmap, title)
+            currentScreen = Screen.HOME
         }
     }
 
@@ -339,17 +417,32 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun savePageEdit(documentId: Long, pageId: Long, editedBitmap: Bitmap) {
+    /**
+     * Tapping a page now opens ML Kit's OWN scanner UI (Filters, Crop and
+     * rotate, Clean) instead of an in-app editor — see TempGalleryExport's
+     * doc comment for why this requires a manual extra step from the user
+     * (ML Kit has no API to open an arbitrary existing file directly; the
+     * user has to tap its gallery-import button and pick the temp copy we
+     * just placed there).
+     */
+    private fun launchPageEditViaMlKit(documentId: Long, page: DetailPage) {
         lifecycleScope.launch {
-            repository.replacePageImage(documentId, pageId, editedBitmap)
-            refreshOpenDocument(documentId)
-            currentScreen = Screen.DETAIL
-        }
-    }
+            val sourceFile = File(page.uri.path ?: return@launch)
+            if (!sourceFile.exists()) return@launch
 
-    private fun launchPageRescan(documentId: Long, pageId: Long) {
-        pendingScan = PendingScan.ReplacePage(documentId, pageId)
-        singlePageScannerLauncher.launch()
+            withContext(Dispatchers.IO) {
+                TempGalleryExport.exportForPicking(applicationContext, sourceFile)
+            }
+
+            android.widget.Toast.makeText(
+                this@MainActivity,
+                "Tap the gallery icon and pick the page you just opened",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+
+            pendingScan = PendingScan.ReplacePage(documentId, page.pageId)
+            singlePageScannerLauncher.launch()
+        }
     }
 
     /** Detail screen's "Export" action: reuse the existing size-limited export flow. */
