@@ -41,11 +41,6 @@ data class DetailPage(
     val uri: Uri
 )
 
-/**
- * @param onReorder fires ONCE per drag gesture (on release), not per intermediate
- * swap, with the full new page-ID order. This keeps the DB write count proportional to the
- * number of drags the user performs, not the number of frames they drag through.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DocumentDetailScreen(
@@ -67,8 +62,6 @@ fun DocumentDetailScreen(
     var showShareSheet by remember { mutableStateOf(false) }
     var deletePageTarget by remember { mutableStateOf<DetailPage?>(null) }
 
-    // Local mutable copy so dragging feels instant; the actual DB write is
-    // triggered only when the user finishes dragging.
     var orderedPages by remember(pages) { mutableStateOf(pages) }
 
     val gridState = rememberLazyGridState()
@@ -76,20 +69,7 @@ fun DocumentDetailScreen(
         orderedPages = orderedPages.toMutableList().apply {
             add(to.index, removeAt(from.index))
         }
-    }
-
-    // Safely observe dragging state to perform the database snapshot commit on drag drop
-    val isDragging = reorderableState.isDragging
-    var isFirstLaunch by remember { mutableStateOf(true) }
-
-    LaunchedEffect(isDragging) {
-        if (!isDragging) {
-            if (!isFirstLaunch) {
-                onReorder(orderedPages.map { it.pageId })
-            } else {
-                isFirstLaunch = false
-            }
-        }
+        onReorder(orderedPages.map { it.pageId })
     }
 
     Scaffold(
@@ -258,9 +238,6 @@ private fun ReorderableCollectionItemScope.PageThumbnail(
             }
         }
 
-        // Drag handle: long-press anywhere on this icon to pick up the page for
-        // reordering. Kept separate from onClick (tap = edit) so the two
-        // gestures don't fight each other.
         Surface(
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
             shape = RoundedCornerShape(4.dp),
