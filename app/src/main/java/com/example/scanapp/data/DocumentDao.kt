@@ -14,6 +14,10 @@ data class DocumentWithPages(
     val pages: List<DocumentPageEntity>
 )
 
+/** Sort options for the Home/Files list. */
+enum class DocumentSortBy { NAME, DATE_MODIFIED, PAGE_COUNT }
+enum class SortDirection { ASCENDING, DESCENDING }
+
 @Dao
 interface DocumentDao {
 
@@ -22,6 +26,42 @@ interface DocumentDao {
 
     @Query("SELECT * FROM documents WHERE title LIKE '%' || :query || '%' ORDER BY modifiedAtMillis DESC")
     fun observeSearchResults(query: String): Flow<List<DocumentEntity>>
+
+    @Query("SELECT * FROM documents ORDER BY title COLLATE NOCASE ASC")
+    fun observeAllDocumentsByNameAsc(): Flow<List<DocumentEntity>>
+
+    @Query("SELECT * FROM documents ORDER BY title COLLATE NOCASE DESC")
+    fun observeAllDocumentsByNameDesc(): Flow<List<DocumentEntity>>
+
+    @Query("SELECT * FROM documents ORDER BY modifiedAtMillis ASC")
+    fun observeAllDocumentsByDateAsc(): Flow<List<DocumentEntity>>
+
+    @Query("SELECT * FROM documents ORDER BY modifiedAtMillis DESC")
+    fun observeAllDocumentsByDateDesc(): Flow<List<DocumentEntity>>
+
+    @Query(
+        "SELECT * FROM documents WHERE title LIKE '%' || :query || '%' " +
+            "ORDER BY title COLLATE NOCASE ASC"
+    )
+    fun observeSearchResultsByNameAsc(query: String): Flow<List<DocumentEntity>>
+
+    @Query(
+        "SELECT * FROM documents WHERE title LIKE '%' || :query || '%' " +
+            "ORDER BY title COLLATE NOCASE DESC"
+    )
+    fun observeSearchResultsByNameDesc(query: String): Flow<List<DocumentEntity>>
+
+    @Query(
+        "SELECT * FROM documents WHERE title LIKE '%' || :query || '%' " +
+            "ORDER BY modifiedAtMillis ASC"
+    )
+    fun observeSearchResultsByDateAsc(query: String): Flow<List<DocumentEntity>>
+
+    @Query(
+        "SELECT * FROM documents WHERE title LIKE '%' || :query || '%' " +
+            "ORDER BY modifiedAtMillis DESC"
+    )
+    fun observeSearchResultsByDateDesc(query: String): Flow<List<DocumentEntity>>
 
     @Query("SELECT * FROM document_pages WHERE documentId = :documentId ORDER BY pageIndex ASC")
     suspend fun getPagesForDocument(documentId: Long): List<DocumentPageEntity>
