@@ -23,11 +23,13 @@ enum class SizeUnit { KB, MB }
 /**
  * Customization state for the export step.
  * sizeLimitBytes == null means "no limit, just use quality slider directly".
+ * fileName is the custom filename (without extension); null or empty means use random name.
  */
 data class ExportUiState(
     val format: OutputFormat = OutputFormat.PDF,
     val sizeLimitBytes: Long? = 2L * 1024 * 1024, // default 2MB cap
-    val quality: Int = 90
+    val quality: Int = 90,
+    val fileName: String = ""
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,6 +119,18 @@ fun ScanScreen(
                         uiState = uiState.copy(format = OutputFormat.PNG)
                     }
                 }
+
+                Spacer(Modifier.height(16.dp))
+
+                // File name input
+                OutlinedTextField(
+                    value = uiState.fileName,
+                    onValueChange = { uiState = uiState.copy(fileName = it) },
+                    label = { Text("File name (optional)") },
+                    placeholder = { Text("Leave blank for random name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 Spacer(Modifier.height(16.dp))
 
