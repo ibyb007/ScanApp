@@ -43,9 +43,8 @@ data class DetailPage(
 
 /**
  * @param onReorder fires ONCE per drag gesture (on release), not per intermediate
- *   swap, with the full new page-ID order — see the draggableHandle's
- *   onDragStopped below. This keeps the DB write count proportional to the
- *   number of drags the user performs, not the number of frames they drag through.
+ * swap, with the full new page-ID order. This keeps the DB write count proportional
+ * to the number of drags the user performs, not the number of frames they drag through.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,11 +68,17 @@ fun DocumentDetailScreen(
     var deletePageTarget by remember { mutableStateOf<DetailPage?>(null) }
 
     // Local mutable copy so dragging feels instant; the actual DB write is
-    // triggered only from onDragStopped below, not on every intermediate swap.
+    // triggered only from onMoveComplete below, not on every intermediate swap.
     var orderedPages by remember(pages) { mutableStateOf(pages) }
 
     val gridState = rememberLazyGridState()
-    val reorderableState = rememberReorderableLazyGridState(gridState) { from, to ->
+    val reorderableState = rememberReorderableLazyGridState(
+        lazyGridState = gridState,
+        onMoveComplete = { _, _ ->
+            // Releasing the drag commits the CURRENT orderedPages snapshot to the DB exactly once
+            onReorder(orderedPages.map { it.pageId })
+        }
+    ) { from, to ->
         orderedPages = orderedPages.toMutableList().apply {
             add(to.index, removeAt(from.index))
         }
@@ -140,12 +145,8 @@ fun DocumentDetailScreen(
                         elevation = elevation,
                         onClick = { onPageClick(page) },
                         onDeleteClick = { deletePageTarget = page },
-                        // Long-press the drag handle to start reordering; releasing
-                        // commits the CURRENT orderedPages snapshot to the DB exactly
-                        // once, regardless of how many intermediate swaps happened.
-                        dragHandleModifier = Modifier.longPressDraggableHandle(
-                            onDragStopped = { onReorder(orderedPages.map { it.pageId }) }
-                        )
+                        // Parameter-free handle method intercepts the gesture safely
+                        dragHandleModifier = Modifier.longPressDraggableHandle()
                     )
                 }
             }
@@ -213,96 +214,3 @@ private fun ReorderableCollectionItemScope.PageThumbnail(
         modifier = Modifier
             .aspectRatio(0.75f)
             .shadow(elevation, RoundedCornerShape(8.dp))
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
-    ) {
-        Image(
-            painter = rememberAsyncImagePainter(page.uri),
-            contentDescription = "Page ${displayIndex + 1}",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            shape = RoundedCornerShape(4.dp),
-            modifier = Modifier.padding(6.dp).align(Alignment.BottomStart)
-        ) {
-            Text(
-                "${displayIndex + 1}",
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-            )
-        }
-
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            shape = RoundedCornerShape(4.dp),
-            modifier = Modifier.padding(2.dp).align(Alignment.TopEnd)
-        ) {
-            IconButton(onClick = onDeleteClick, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Delete page",
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-
-        // Drag handle: long-press anywhere on this icon to pick up the page for
-        // reordering. Kept separate from onClick (tap = edit) so the two
-        // gestures don't fight each other.
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            shape = RoundedCornerShape(4.dp),
-            modifier = Modifier.padding(2.dp).align(Alignment.TopStart)
-        ) {
-            Icon(
-                Icons.Filled.DragHandle,
-                contentDescription = "Drag to reorder",
-                modifier = Modifier
-                    .size(32.dp)
-                    .padding(6.dp)
-                    .then(dragHandleModifier)
-            )
-        }
-    }
-}
-
-@Composable
-private fun RenameDialog(currentTitle: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    var text by remember(currentTitle) { mutableStateOf(currentTitle) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename document") },
-        text = {
-            OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true)
-        },
-        confirmButton = {
-            TextButton(onClick = { if (text.isNotBlank()) onConfirm(text) }) { Text("Rename") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ShareFormatSheet(onFormatSelected: (OutputFormat) -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(16.dp).padding(bottom = 24.dp)) {
-            Text("Share as", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
-            ListItem(
-                headlineContent = { Text("PDF") },
-                supportingContent = { Text("All pages combined into one PDF") },
-                modifier = Modifier.clickable { onFormatSelected(OutputFormat.PDF) }
-            )
-            ListItem(
-                headlineContent = { Text("JPEG images") },
-                supportingContent = { Text("Each page as a separate image") },
-                modifier = Modifier.clickable { onFormatSelected(OutputFormat.JPEG) }
-            )
-        }
-    }
-}
