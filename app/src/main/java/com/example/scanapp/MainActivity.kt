@@ -94,7 +94,10 @@ class MainActivity : ComponentActivity() {
                     onDocumentClick = { doc -> openDocumentDetail(doc) },
                     onRename = { doc, newTitle -> renameDocument(doc, newTitle) },
                     onDelete = { doc -> deleteDocument(doc) },
-                    onShare = { doc, format -> shareDocument(doc.id, doc.title, format) }
+                    onShare = { doc, format ->
+    val documentId = doc.id.toLongOrNull() ?: return@HomeScreen
+    shareDocument(documentId, doc.title, format)
+                    }
                 )
                 Screen.DETAIL -> {
                     val documentId = openDocumentId
