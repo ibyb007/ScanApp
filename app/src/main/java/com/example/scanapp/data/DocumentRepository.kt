@@ -63,6 +63,36 @@ class DocumentRepository(private val context: Context) {
     suspend fun touchAccessed(documentId: Long) =
         dao.touchAccessedAt(documentId, System.currentTimeMillis())
 
+    /** Every page in the library, across all documents, for the collage picker. */
+    suspend fun getAllPagesForPicker(): List<PageWithDocumentTitle> =
+        dao.getAllPagesAcrossAllDocuments()
+
+    /**
+     * Saves a single already-composed bitmap (e.g. a finished collage) as a
+     * brand new standalone one-page document. Distinct from saveNewDocument,
+     * which takes scanner Uris — this takes a Bitmap directly since collage
+     * output never goes through the scanner.
+     */
+    suspend fun saveBitmapAsNewDocument(bitmap: android.graphics.Bitmap, title: String): Long =
+        withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val documentId = dao.insertDocument(
+                DocumentEntity(
+                    title = title,
+                    createdAtMillis = now,
+                    modifiedAtMillis = now,
+                    accessedAtMillis = now
+                )
+            )
+            val docDir = File(scansRoot, documentId.toString()).apply { mkdirs() }
+            val destFile = File(docDir, uniquePageFileName())
+            destFile.outputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+            }
+            dao.insertPages(listOf(DocumentPageEntity(documentId = documentId, pageIndex = 0, filePath = destFile.absolutePath)))
+            documentId
+        }
+
     /**
      * Save freshly scanned page URIs (from ML Kit, which returns content:// or
      * file:// URIs into its own cache) as a new persistent Document. Each page

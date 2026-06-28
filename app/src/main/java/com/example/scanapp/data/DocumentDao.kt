@@ -14,6 +14,13 @@ data class DocumentWithPages(
     val pages: List<DocumentPageEntity>
 )
 
+/** Projection for the cross-document page picker: a page plus its parent document's title. */
+data class PageWithDocumentTitle(
+    @androidx.room.Embedded
+    val page: DocumentPageEntity,
+    val documentTitle: String
+)
+
 /** Sort options for the Home/Files list. */
 enum class DocumentSortBy { NAME, DATE_MODIFIED, PAGE_COUNT }
 enum class SortDirection { ASCENDING, DESCENDING }
@@ -102,4 +109,18 @@ interface DocumentDao {
 
     @Query("UPDATE documents SET accessedAtMillis = :timestamp WHERE id = :documentId")
     suspend fun touchAccessedAt(documentId: Long, timestamp: Long)
+
+    /**
+     * Every page across every document, newest document first, annotated with
+     * its parent document's title. Used by the collage picker, which lets the
+     * user pick pages from anywhere in their library rather than being scoped
+     * to one document — grouping by title is how the picker UI distinguishes
+     * "page 1 of Receipt A" from "page 1 of Receipt B".
+     */
+    @Query(
+        "SELECT document_pages.*, documents.title AS documentTitle FROM document_pages " +
+            "INNER JOIN documents ON documents.id = document_pages.documentId " +
+            "ORDER BY documents.modifiedAtMillis DESC, document_pages.pageIndex ASC"
+    )
+    suspend fun getAllPagesAcrossAllDocuments(): List<PageWithDocumentTitle>
 }
