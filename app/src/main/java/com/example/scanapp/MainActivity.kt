@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
+import com.example.scanapp.collage.canvasPx
 import com.example.scanapp.data.DocumentEntity
 import com.example.scanapp.data.DocumentRepository
 import com.example.scanapp.data.DocumentSortBy
@@ -68,6 +69,10 @@ class MainActivity : ComponentActivity() {
     private var collageSelectedPageIds: List<Long> = emptyList()
     private var collageSelectedTemplate: com.example.scanapp.collage.CollageTemplate =
         com.example.scanapp.collage.CollageTemplates.ALL.first()
+    private var collageSelectedPageSize: com.example.scanapp.collage.CollagePageSize =
+        com.example.scanapp.collage.CollagePageSize.A4
+    private var collageSelectedOrientation: com.example.scanapp.collage.CollageOrientation =
+        com.example.scanapp.collage.CollageOrientation.PORTRAIT
 
     /**
      * The scanner launcher is reused for three distinct flows (new document,
@@ -170,8 +175,8 @@ class MainActivity : ComponentActivity() {
                     previewBitmap = collagePreviewBitmap,
                     isComposing = isComposingCollage,
                     onBackClick = { currentScreen = Screen.HOME },
-                    onSelectionOrTemplateChanged = { pageIds, template ->
-                        updateCollagePreview(pageIds, template)
+                    onSelectionOrTemplateChanged = { pageIds, template, pageSize, orientation ->
+                        updateCollagePreview(pageIds, template, pageSize, orientation)
                     },
                     onSaveClick = { saveCollageAsNewDocument() }
                 )
@@ -314,10 +319,14 @@ class MainActivity : ComponentActivity() {
      */
     private fun updateCollagePreview(
         selectedPageIds: List<Long>,
-        template: com.example.scanapp.collage.CollageTemplate
+        template: com.example.scanapp.collage.CollageTemplate,
+        pageSize: com.example.scanapp.collage.CollagePageSize,
+        orientation: com.example.scanapp.collage.CollageOrientation
     ) {
         collageSelectedPageIds = selectedPageIds
         collageSelectedTemplate = template
+        collageSelectedPageSize = pageSize
+        collageSelectedOrientation = orientation
 
         if (selectedPageIds.isEmpty()) {
             collagePreviewBitmap = null
@@ -334,11 +343,12 @@ class MainActivity : ComponentActivity() {
                 if (bitmaps.isEmpty()) {
                     null
                 } else {
+                    val (canvasWidthPx, canvasHeightPx) = pageSize.canvasPx(orientation)
                     com.example.scanapp.collage.CollageCompositor.compose(
                         pages = bitmaps,
                         template = template,
-                        canvasWidthPx = 1200,
-                        canvasHeightPx = 1600
+                        canvasWidthPx = canvasWidthPx,
+                        canvasHeightPx = canvasHeightPx
                     )
                 }
             }
