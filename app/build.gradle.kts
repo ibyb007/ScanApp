@@ -19,6 +19,27 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    // NOTE: release builds are signed with the debug keystore for now, purely
+    // so the APK attached to GitHub Releases is actually installable on a
+    // device without extra setup. This is NOT secure for a real public
+    // release — anyone with the AGP-default debug keystore (a well-known,
+    // shared file) could sign updates claiming to be this app. Before
+    // distributing this beyond testing, generate a real release keystore
+    // and replace this signingConfig with one that reads its
+    // path/passwords from GitHub Actions secrets instead.
+    signingConfigs {
+        getByName("debug") {
+            // Uses AGP's default debug keystore — no changes needed here.
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+        }
     }
 
     compileOptions {
