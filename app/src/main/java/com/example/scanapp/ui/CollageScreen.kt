@@ -33,9 +33,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
 import com.example.scanapp.collage.CollageCellAssignment
+import com.example.scanapp.collage.CollageCellTransform
 import com.example.scanapp.collage.CollageOrientation
 import com.example.scanapp.collage.CollagePageSize
 import com.example.scanapp.collage.CollageTemplate
+import com.example.scanapp.collage.CollageTemplates
 import kotlin.math.roundToInt
 
 data class CollagePickerPage(
@@ -44,7 +46,6 @@ data class CollagePickerPage(
     val documentTitle: String
 )
 
-// Active interactive state representation for CamScanner style canvas manipulation
 data class InteractivePagePlacement(
     val pageId: Long,
     val uri: Uri,
@@ -60,17 +61,16 @@ fun CollageScreen(
     onBackClick: () -> Unit,
     onSaveClick: (CollageTemplate, CollagePageSize, CollageOrientation, List<CollageCellAssignment>) -> Unit
 ) {
-    var selectedLayout by remember { mutableStateOf(CollageTemplate.TWO_BY_ONE) }
+    var selectedLayout by remember { mutableStateOf(CollageTemplates.ALL.first()) }
     var selectedPageSize by remember { mutableStateOf(CollagePageSize.A4) }
     
-    // Canvas items active list
     val activePlacements = remember { mutableStateListOf<InteractivePagePlacement>() }
     var selectedPlacementIndex by remember { mutableStateOf<Int?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Collage Workspace") },
+                title = { Text("Create Collage") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
@@ -82,10 +82,10 @@ fun CollageScreen(
                     } else {
                         IconButton(
                             onClick = {
-                                val assignments = activePlacements.mapIndexed { index, placement ->
+                                val assignments = activePlacements.map { placement ->
                                     CollageCellAssignment(
-                                        cellIndex = index,
-                                        pageId = placement.pageId
+                                        pageId = placement.pageId,
+                                        transform = CollageCellTransform(scale = placement.scale)
                                     )
                                 }
                                 onSaveClick(selectedLayout, selectedPageSize, CollageOrientation.PORTRAIT, assignments)
@@ -105,7 +105,6 @@ fun CollageScreen(
                 .padding(paddingValues)
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
         ) {
-            // Interactive workspace layout window container
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -114,7 +113,7 @@ fun CollageScreen(
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color.White)
                     .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
-                    .clickable { selectedPlacementIndex = null }, // Clear selection on backdrop tap
+                    .clickable { selectedPlacementIndex = null },
                 contentAlignment = Alignment.Center
             ) {
                 if (activePlacements.isEmpty()) {
@@ -124,12 +123,10 @@ fun CollageScreen(
                         Text("Tap library items below to place on canvas", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                     }
                 } else {
-                    // Render interactive view elements
                     Box(modifier = Modifier.fillMaxSize()) {
                         activePlacements.forEachIndexed { index, placement ->
                             val isSelected = selectedPlacementIndex == index
                             
-                            // Combine transform gesture processing models
                             val transformState = rememberTransformableState { zoomChange, _, _ ->
                                 if (isSelected) {
                                     placement.scale = (placement.scale * zoomChange).coerceIn(0.5f, 3.0f)
@@ -164,9 +161,7 @@ fun CollageScreen(
                                     contentScale = ContentScale.Crop
                                 )
 
-                                // CamScanner Action Controls overlays
                                 if (isSelected) {
-                                    // Remove node button top-left
                                     IconButton(
                                         onClick = {
                                             activePlacements.removeAt(index)
@@ -181,7 +176,6 @@ fun CollageScreen(
                                         Icon(Icons.Filled.Cancel, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(16.dp))
                                     }
 
-                                    // Interactive Resize Anchor indicator emblem bottom-right
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomEnd)
@@ -199,7 +193,6 @@ fun CollageScreen(
                 }
             }
 
-            // Bottom controls panel matching file "1782721798345.png" structural design tokens
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -208,7 +201,6 @@ fun CollageScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     
-                    // 1. Grid Preset Selectors
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.GridOn, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
@@ -216,18 +208,17 @@ fun CollageScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(CollageTemplate.values()) { template ->
+                        items(CollageTemplates.ALL, key = { it.id }) { template ->
                             FilterChip(
-                                selected = selectedLayout == template,
+                                selected = selectedLayout.id == template.id,
                                 onClick = { selectedLayout = template },
-                                label = { Text(template.name.replace("_", " ")) }
+                                label = { Text(template.displayName) }
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // 2. Aspect Sizes strip row
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.AspectRatio, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
@@ -235,27 +226,26 @@ fun CollageScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(CollagePageSize.values()) { size ->
+                        items(CollagePageSize.entries.toList(), key = { it.name }) { size ->
                             FilterChip(
                                 selected = selectedPageSize == size,
                                 onClick = { selectedPageSize = size },
-                                label = { Text(size.name) }
+                                label = { Text(size.displayName) }
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // 3. Document Source Asset Strip Picker
                     Text("Select Media Input Pool", style = MaterialTheme.typography.titleSmall)
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         contentPadding = PaddingValues(vertical = 4.dp)
                     ) {
-                        items(allPages) { pickerPage ->
+                        items(allPages, key = { it.pageId }) { pickerPage ->
                             Box(
                                 modifier = Modifier
                                     .size(76.dp, 100.dp)
@@ -284,7 +274,7 @@ fun CollageScreen(
                                         .background(Color.Black.copy(alpha = 0.5f))
                                         .align(Alignment.BottomCenter)
                                         .padding(2.dp)
-                                    ) {
+                                ) {
                                     Text(
                                         text = pickerPage.documentTitle,
                                         style = MaterialTheme.typography.labelSmall,
