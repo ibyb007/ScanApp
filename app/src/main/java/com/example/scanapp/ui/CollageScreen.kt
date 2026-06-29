@@ -506,7 +506,7 @@ private fun CollageBottomDock(
                         FilterChip(
                             selected = false,
                             onClick = onOrientationToggle,
-                            leadingIcon = {
+                            leading = {
                                 Icon(
                                     if (selectedOrientation == CollageOrientation.PORTRAIT) Icons.Filled.CropPortrait else Icons.Filled.CropLandscape,
                                     contentDescription = null,
