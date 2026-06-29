@@ -3,6 +3,12 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required to launch the system package installer for the
+         auto-downloaded update APK (ACTION_INSTALL_PACKAGE / the
+         PackageInstaller session flow). Even with this permission granted,
+         Android still shows its own install confirmation screen — this
+         permission only lets the app *request* that screen, not skip it. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Only needed on Android 9 (API 28) and below; ML Kit scanner and our
          MediaStore-based save handle Android 10+ without this permission. -->
     <uses-permission
