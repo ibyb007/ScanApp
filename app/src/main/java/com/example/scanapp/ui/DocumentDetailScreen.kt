@@ -304,12 +304,32 @@ fun DocumentDetailScreen(
     }
 
     if (showShareSheet) {
-        ShareFormatSheet(
+        LocalShareFormatSheet(
             onFormatSelected = { format ->
                 showShareSheet = false
                 onShare(format)
             },
             onDismiss = { showShareSheet = false }
         )
+    }
+}
+
+@Composable
+private fun LocalShareFormatSheet(onFormatSelected: (OutputFormat) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(16.dp).padding(bottom = 24.dp)) {
+            Text("Share as", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(12.dp))
+            ListItem(
+                headlineContent = { Text("PDF") },
+                supportingContent = { Text("All pages combined into one PDF") },
+                modifier = Modifier.clickable { onFormatSelected(OutputFormat.PDF) }
+            )
+            ListItem(
+                headlineContent = { Text("JPEG images") },
+                supportingContent = { Text("Each page as a separate image") },
+                modifier = Modifier.clickable { onFormatSelected(OutputFormat.JPEG) }
+            )
+        }
     }
 }
