@@ -26,7 +26,7 @@ object PdfImporter {
     private const val TARGET_DPI = 200f
     private const val POINTS_PER_INCH = 72f
 
-    private const val SCRATCH_DIR_NAME = "pdf_import_scratch"
+    private const val SCRATCH_DIR_NAME = "share_scratch/pdf_import"
 
     /**
      * Renders every page of the PDF at [pdfUri] to its own JPEG file and returns
@@ -77,7 +77,24 @@ object PdfImporter {
         }
 
         return resultFiles.map { file ->
-            FileProvider.getUriForFile(context, "com.example.scanapp.fileprovider", file)
+            try {
+                FileProvider.getUriForFile(context, "com.example.scanapp.fileprovider", file)
+            } catch (e: IllegalArgumentException) {
+                // Diagnostic: surface exactly what we attempted vs. what FileProvider has
+                // configured, since the bare exception message alone isn't enough to tell
+                // whether this is a stale-build issue, a context mismatch, or something else.
+                val diag = buildString {
+                    append("PdfImporter FileProvider mismatch. ")
+                    append("file.path=${file.path} ")
+                    append("file.canonicalPath=${file.canonicalPath} ")
+                    append("file.exists=${file.exists()} ")
+                    append("context.cacheDir=${context.cacheDir.path} ")
+                    append("context.cacheDir.canonicalPath=${context.cacheDir.canonicalFile.path} ")
+                    append("context.packageName=${context.packageName} ")
+                    append("original=${e.message}")
+                }
+                throw IllegalArgumentException(diag, e)
+            }
         }
     }
 
