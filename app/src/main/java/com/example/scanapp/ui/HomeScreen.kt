@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -30,8 +29,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,11 +37,10 @@ import com.example.scanapp.export.OutputFormat
 import com.example.scanapp.data.DocumentSortBy
 import com.example.scanapp.data.SortDirection
 
-/** One saved scan shown in the Recents list. */
 data class RecentDocument(
     val id: String,
     val title: String,
-    val subtitle: String,   // e.g. "Saved 27/06/26 18:09 · 2 pages"
+    val subtitle: String,
     val thumbnailUri: Uri?,
     val pageCount: Int,
     val modifiedAtMillis: Long = 0L
@@ -74,12 +70,8 @@ fun HomeScreen(
     var shareTarget by remember { mutableStateOf<RecentDocument?>(null) }
     var deleteMultipleConfirm by remember { mutableStateOf(false) }
 
-    // Selection mode state. Entered via long-press; exited by tapping the X
-    // in the top bar or once the selection becomes empty after a delete.
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
-    // Search bar starts collapsed to a small icon; tapping it (or the icon)
-    // expands it into a full-width field. Collapses again when cleared+unfocused.
     var searchExpanded by remember { mutableStateOf(searchQuery.isNotEmpty()) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
 
@@ -124,9 +116,7 @@ fun HomeScreen(
             }
         },
         bottomBar = {
-            Box(modifier = Modifier.background(Color.Transparent)) {
-                ScanAppBottomNav(onSettingsClick = onSettingsClick, onToolsClick = onToolsClick)
-            }
+            ScanAppBottomNav(onSettingsClick = onSettingsClick, onToolsClick = onToolsClick)
         },
         floatingActionButton = {
             if (!selectionMode) {
@@ -141,9 +131,6 @@ fun HomeScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
-            // Header row: compact search icon/field + "All files" + select/sort controls.
-            // Search starts as a small icon button (per request) rather than a
-            // full-width bar, and expands in place when tapped.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -444,24 +431,9 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier, isSearching: Boolea
     }
 }
 
-/**
- * Floating, frosted-glass-styled bottom nav: an inset pill rather than an
- * edge-to-edge bar, with a translucent layered surface to suggest glass.
- *
- * True backdrop blur (blurring the page content showing *through* the bar)
- * needs Android 12+ RenderEffect APIs or a third-party blur library — neither
- * is worth pulling in for one visual flourish on an app with minSdk 24, where
- * it would either silently do nothing pre-31 or need a new dependency. This
- * gets the same frosted-glass identity — translucency, a soft top highlight,
- * a hairline border catching the light — through layered semi-transparent
- * surfaces, which is what most "glass" UIs render as in practice anyway.
- */
 @Composable
 private fun ScanAppBottomNav(onSettingsClick: () -> Unit = {}, onToolsClick: () -> Unit = {}) {
     var selected by remember { mutableStateOf(0) }
-    // Order/labels per the latest design: Home, Tools, Backup, Settings.
-    // "Files" was renamed to "Backup" and "Me" to "Settings" (with a gear
-    // icon), and Tools moved into the 2nd slot.
     val items = listOf(
         Triple("Home", Icons.Filled.Home, 0),
         Triple("Tools", Icons.Filled.Description, 1),
@@ -469,114 +441,35 @@ private fun ScanAppBottomNav(onSettingsClick: () -> Unit = {}, onToolsClick: () 
         Triple("Settings", Icons.Filled.Settings, 3)
     )
 
-    val glassColor = MaterialTheme.colorScheme.surface
-
-    Box(
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 0.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .clip(RoundedCornerShape(28.dp))
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .clip(RoundedCornerShape(32.dp))
-                // Frosted base fill: translucent rather than opaque, so
-                // whatever's behind (content scrolled under the floating bar)
-                // still tints through faintly.
-                .background(glassColor.copy(alpha = 0.72f))
-                // Soft vertical sheen, brighter near the top edge — the part
-                // of a glass pane that catches the most light — fading by
-                // the bottom, which is what reads as "glass" rather than
-                // just "a translucent rectangle."
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.16f),
-                            Color.White.copy(alpha = 0.02f),
-                            Color.Black.copy(alpha = 0.04f)
-                        )
-                    )
+        items.forEach { (label, icon, index) ->
+            NavigationBarItem(
+                selected = selected == index,
+                onClick = {
+                    when (index) {
+                        1 -> onToolsClick()
+                        3 -> onSettingsClick()
+                        else -> selected = index
+                    }
+                },
+                icon = { Icon(icon, contentDescription = label) },
+                label = { Text(label) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                .border(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.35f),
-                            Color.White.copy(alpha = 0.05f)
-                        )
-                    ),
-                    shape = RoundedCornerShape(32.dp)
-                ),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            items.forEach { (label, icon, index) ->
-                GlassNavItem(
-                    label = label,
-                    icon = icon,
-                    selected = selected == index,
-                    onClick = {
-                        // Home/Backup remain visual-only placeholders for now;
-                        // Tools opens the collage builder and Settings opens
-                        // the settings screen — both navigate away
-                        // immediately, so we don't persist them as the
-                        // "selected" tab the way a real destination would.
-                        when (index) {
-                            1 -> onToolsClick()
-                            3 -> onSettingsClick()
-                            else -> selected = index
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            )
         }
-    }
-}
-
-@Composable
-private fun GlassNavItem(
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val contentColor = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxHeight()
-            .clip(RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(
-            modifier = if (selected) {
-                Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                    .padding(horizontal = 18.dp, vertical = 4.dp)
-            } else {
-                Modifier.padding(horizontal = 18.dp, vertical = 4.dp)
-            }
-        ) {
-            Icon(icon, contentDescription = label, tint = contentColor, modifier = Modifier.size(22.dp))
-        }
-        Spacer(Modifier.height(2.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = contentColor,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-        )
     }
 }
 
