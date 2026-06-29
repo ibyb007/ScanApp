@@ -49,14 +49,31 @@ fun ScanScreen(
     exportResultText: String?,
     onScanClick: () -> Unit,
     onExportClick: (ExportUiState) -> Unit,
-    onBackClick: () -> Unit = {}
+    onBackClick: () -> Unit = {},
+    // Hoisted so the caller (MainActivity) can persist these across screen
+    // switches — previously these lived in `remember` blocks scoped to this
+    // composable, so every time the user left and re-entered this screen
+    // (e.g. Detail -> Export -> back -> Export again) the size limit, unit,
+    // and filename silently reset to their defaults.
+    initialUiState: ExportUiState = ExportUiState(),
+    initialUseSizeLimit: Boolean = true,
+    initialSizeUnit: SizeUnit = SizeUnit.KB,
+    initialSizeText: String = "500",
+    onExportUiStateChange: (ExportUiState, useSizeLimit: Boolean, sizeUnit: SizeUnit, sizeText: String) -> Unit = { _, _, _, _ -> }
 ) {
-    var uiState by remember { mutableStateOf(ExportUiState()) }
-    var useSizeLimit by remember { mutableStateOf(true) }
-    var sizeUnit by remember { mutableStateOf(SizeUnit.KB) }
+    var uiState by remember { mutableStateOf(initialUiState) }
+    var useSizeLimit by remember { mutableStateOf(initialUseSizeLimit) }
+    var sizeUnit by remember { mutableStateOf(initialSizeUnit) }
     // What's actually typed in the box, kept as text so partial/invalid entry
     // (like "" or "1.") doesn't get force-corrected while the user is mid-edit.
-    var sizeText by remember { mutableStateOf("500") }
+    var sizeText by remember { mutableStateOf(initialSizeText) }
+
+    // Reports every change back up to the caller immediately so the latest
+    // values are always available to persist, regardless of whether the user
+    // eventually taps Export or just navigates away.
+    fun reportChange() {
+        onExportUiStateChange(uiState, useSizeLimit, sizeUnit, sizeText)
+    }
 
     fun applySizeText(text: String, unit: SizeUnit) {
         sizeText = text
@@ -69,6 +86,7 @@ fun ScanScreen(
                 SizeUnit.MB -> (value * 1024 * 1024).toLong()
             }
         )
+        reportChange()
     }
 
     // Tracks whether we've already "consumed" the current exportResultText for
@@ -135,14 +153,17 @@ fun ScanScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         FormatChip("PDF", uiState.format == OutputFormat.PDF) {
                             uiState = uiState.copy(format = OutputFormat.PDF)
+                            reportChange()
                         }
                         Spacer(Modifier.width(8.dp))
                         FormatChip("JPEG", uiState.format == OutputFormat.JPEG) {
                             uiState = uiState.copy(format = OutputFormat.JPEG)
+                            reportChange()
                         }
                         Spacer(Modifier.width(8.dp))
                         FormatChip("PNG", uiState.format == OutputFormat.PNG) {
                             uiState = uiState.copy(format = OutputFormat.PNG)
+                            reportChange()
                         }
                     }
 
@@ -151,7 +172,7 @@ fun ScanScreen(
                     // File name input
                     OutlinedTextField(
                         value = uiState.fileName,
-                        onValueChange = { uiState = uiState.copy(fileName = it) },
+                        onValueChange = { uiState = uiState.copy(fileName = it); reportChange() },
                         label = { Text("File name (optional)") },
                         placeholder = { Text("Leave blank for random name") },
                         singleLine = true,
@@ -171,7 +192,10 @@ fun ScanScreen(
                             onCheckedChange = { checked ->
                                 useSizeLimit = checked
                                 if (checked) applySizeText(sizeText, sizeUnit)
-                                else uiState = uiState.copy(sizeLimitBytes = null)
+                                else {
+                                    uiState = uiState.copy(sizeLimitBytes = null)
+                                    reportChange()
+                                }
                             }
                         )
                     }
@@ -225,7 +249,7 @@ fun ScanScreen(
                         Text("Quality: ${uiState.quality}")
                         Slider(
                             value = uiState.quality.toFloat(),
-                            onValueChange = { uiState = uiState.copy(quality = it.toInt()) },
+                            onValueChange = { uiState = uiState.copy(quality = it.toInt()); reportChange() },
                             valueRange = 2f..100f
                         )
                     }

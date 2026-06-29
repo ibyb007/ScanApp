@@ -4,7 +4,9 @@ import android.net.Uri
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -14,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
@@ -54,7 +57,9 @@ fun DocumentDetailScreen(
     onPageClick: (DetailPage) -> Unit,
     onAddPagesClick: () -> Unit,
     onDeletePage: (DetailPage) -> Unit,
-    onReorder: (orderedPageIds: List<Long>) -> Unit
+    onReorder: (orderedPageIds: List<Long>) -> Unit,
+    // Exports only the selected pages, as chosen via long-press multi-select.
+    onExportSelected: (List<DetailPage>) -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
@@ -64,64 +69,126 @@ fun DocumentDetailScreen(
 
     var orderedPages by remember(pages) { mutableStateOf(pages) }
 
+    // Multi-select mode for exporting a subset of pages. Entered via
+    // long-press on a thumbnail; exited via the X in the top bar or once
+    // the selection empties out after a toggle.
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedPageIds by remember { mutableStateOf(setOf<Long>()) }
+
+    fun clearSelection() {
+        selectionMode = false
+        selectedPageIds = emptySet()
+    }
+
+    fun toggleSelected(page: DetailPage) {
+        selectedPageIds = if (selectedPageIds.contains(page.pageId)) {
+            selectedPageIds - page.pageId
+        } else {
+            selectedPageIds + page.pageId
+        }
+        if (selectedPageIds.isEmpty()) selectionMode = false
+    }
+
     val gridState = rememberLazyGridState()
     val reorderableState = rememberReorderableLazyGridState(gridState) { from, to ->
-        orderedPages = orderedPages.toMutableList().apply {
-            add(to.index, removeAt(from.index))
+        // Reordering while in selection mode would be ambiguous with
+        // tap-to-select, so drag is disabled there (handled by not attaching
+        // the drag handle modifier below).
+        if (!selectionMode) {
+            orderedPages = orderedPages.toMutableList().apply {
+                add(to.index, removeAt(from.index))
+            }
+            onReorder(orderedPages.map { it.pageId })
         }
-        onReorder(orderedPages.map { it.pageId })
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(title, maxLines = 1) },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            if (selectionMode) {
+                TopAppBar(
+                    title = { Text("${selectedPageIds.size} selected") },
+                    navigationIcon = {
+                        IconButton(onClick = { clearSelection() }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Cancel selection")
+                        }
+                    },
+                    actions = {
+                        TextButton(onClick = { selectedPageIds = orderedPages.map { it.pageId }.toSet() }) {
+                            Text("Select all")
+                        }
                     }
-                },
-                actions = {
-                    IconButton(onClick = { showShareSheet = true }) {
-                        Icon(Icons.Filled.Share, contentDescription = "Share")
+                )
+            } else {
+                TopAppBar(
+                    title = { Text(title, maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = onBackClick) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { showShareSheet = true }) {
+                            Icon(Icons.Filled.Share, contentDescription = "Share")
+                        }
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Rename") },
+                                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                                onClick = { showMenu = false; showRenameDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete document") },
+                                leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                                onClick = { showMenu = false; showDeleteConfirm = true }
+                            )
+                        }
                     }
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "More options")
-                    }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Rename") },
-                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                            onClick = { showMenu = false; showRenameDialog = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete document") },
-                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                            onClick = { showMenu = false; showDeleteConfirm = true }
-                        )
-                    }
-                }
-            )
+                )
+            }
         },
         bottomBar = {
-            BottomAppBar(
-                actions = {
-                    TextButton(onClick = onAddPagesClick) {
-                        Icon(Icons.Filled.Add, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Add pages")
+            if (selectionMode) {
+                BottomAppBar(
+                    actions = {},
+                    floatingActionButton = {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                val selected = orderedPages.filter { it.pageId in selectedPageIds }
+                                if (selected.isNotEmpty()) {
+                                    onExportSelected(selected)
+                                    clearSelection()
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Filled.FileDownload, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Export selected (${selectedPageIds.size})")
+                        }
                     }
-                },
-                floatingActionButton = {
-                    // Export pinned to the bottom-right corner, per request, since
-                    // it's the most frequently needed action on this screen.
-                    ExtendedFloatingActionButton(onClick = onExportClick) {
-                        Icon(Icons.Filled.FileDownload, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Export")
+                )
+            } else {
+                BottomAppBar(
+                    actions = {
+                        TextButton(onClick = onAddPagesClick) {
+                            Icon(Icons.Filled.Add, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Add pages")
+                        }
+                    },
+                    floatingActionButton = {
+                        // Export pinned to the bottom-right corner, per request, since
+                        // it's the most frequently needed action on this screen.
+                        ExtendedFloatingActionButton(onClick = onExportClick) {
+                            Icon(Icons.Filled.FileDownload, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Export")
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     ) { padding ->
         LazyVerticalGrid(
@@ -139,9 +206,17 @@ fun DocumentDetailScreen(
                         page = page,
                         displayIndex = orderedPages.indexOf(page),
                         elevation = elevation,
-                        onClick = { onPageClick(page) },
+                        selectionMode = selectionMode,
+                        isSelected = page.pageId in selectedPageIds,
+                        onClick = {
+                            if (selectionMode) toggleSelected(page) else onPageClick(page)
+                        },
+                        onLongClick = {
+                            if (!selectionMode) selectionMode = true
+                            toggleSelected(page)
+                        },
                         onDeleteClick = { deletePageTarget = page },
-                        dragHandleModifier = Modifier.longPressDraggableHandle()
+                        dragHandleModifier = if (selectionMode) Modifier else Modifier.longPressDraggableHandle()
                     )
                 }
             }
@@ -201,7 +276,10 @@ private fun ReorderableCollectionItemScope.PageThumbnail(
     page: DetailPage,
     displayIndex: Int,
     elevation: androidx.compose.ui.unit.Dp,
+    selectionMode: Boolean,
+    isSelected: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onDeleteClick: () -> Unit,
     dragHandleModifier: Modifier
 ) {
@@ -211,7 +289,12 @@ private fun ReorderableCollectionItemScope.PageThumbnail(
             .shadow(elevation, RoundedCornerShape(8.dp))
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
+            .then(
+                if (isSelected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                } else Modifier
+            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Image(
             painter = rememberAsyncImagePainter(page.uri),
@@ -219,6 +302,14 @@ private fun ReorderableCollectionItemScope.PageThumbnail(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
+
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+            )
+        }
 
         Surface(
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
@@ -232,33 +323,50 @@ private fun ReorderableCollectionItemScope.PageThumbnail(
             )
         }
 
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            shape = RoundedCornerShape(4.dp),
-            modifier = Modifier.padding(2.dp).align(Alignment.TopEnd)
-        ) {
-            IconButton(onClick = onDeleteClick, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Delete page",
-                    modifier = Modifier.size(18.dp)
+        if (selectionMode) {
+            // Checkbox replaces the delete button while selecting, since
+            // per-page delete doesn't make sense in the middle of a
+            // multi-select-for-export gesture.
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.padding(2.dp).align(Alignment.TopEnd)
+            ) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onClick() },
+                    modifier = Modifier.size(32.dp)
                 )
             }
-        }
+        } else {
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.padding(2.dp).align(Alignment.TopEnd)
+            ) {
+                IconButton(onClick = onDeleteClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "Delete page",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
 
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            shape = RoundedCornerShape(4.dp),
-            modifier = Modifier.padding(2.dp).align(Alignment.TopStart)
-        ) {
-            Icon(
-                Icons.Filled.DragHandle,
-                contentDescription = "Drag to reorder",
-                modifier = Modifier
-                    .size(32.dp)
-                    .padding(6.dp)
-                    .then(dragHandleModifier)
-            )
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.padding(2.dp).align(Alignment.TopStart)
+            ) {
+                Icon(
+                    Icons.Filled.DragHandle,
+                    contentDescription = "Drag to reorder",
+                    modifier = Modifier
+                        .size(32.dp)
+                        .padding(6.dp)
+                        .then(dragHandleModifier)
+                )
+            }
         }
     }
 }

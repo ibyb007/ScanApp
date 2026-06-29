@@ -22,8 +22,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -65,7 +65,7 @@ fun HomeScreen(
     sortBy: DocumentSortBy = DocumentSortBy.DATE_MODIFIED,
     sortDirection: SortDirection = SortDirection.DESCENDING,
     onSortChange: (DocumentSortBy, SortDirection) -> Unit = { _, _ -> },
-    onMeClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {},
     onToolsClick: () -> Unit = {}
 ) {
     var actionSheetTarget by remember { mutableStateOf<RecentDocument?>(null) }
@@ -125,7 +125,7 @@ fun HomeScreen(
         },
         bottomBar = {
             Box(modifier = Modifier.background(Color.Transparent)) {
-                ScanAppBottomNav(onMeClick = onMeClick, onToolsClick = onToolsClick)
+                ScanAppBottomNav(onSettingsClick = onSettingsClick, onToolsClick = onToolsClick)
             }
         },
         floatingActionButton = {
@@ -457,13 +457,16 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier, isSearching: Boolea
  * surfaces, which is what most "glass" UIs render as in practice anyway.
  */
 @Composable
-private fun ScanAppBottomNav(onMeClick: () -> Unit = {}, onToolsClick: () -> Unit = {}) {
+private fun ScanAppBottomNav(onSettingsClick: () -> Unit = {}, onToolsClick: () -> Unit = {}) {
     var selected by remember { mutableStateOf(0) }
+    // Order/labels per the latest design: Home, Tools, Backup, Settings.
+    // "Files" was renamed to "Backup" and "Me" to "Settings" (with a gear
+    // icon), and Tools moved into the 2nd slot.
     val items = listOf(
         Triple("Home", Icons.Filled.Home, 0),
-        Triple("Files", Icons.Filled.Folder, 1),
-        Triple("Tools", Icons.Filled.Description, 2),
-        Triple("Me", Icons.Filled.Person, 3)
+        Triple("Tools", Icons.Filled.Description, 1),
+        Triple("Backup", Icons.Filled.Folder, 2),
+        Triple("Settings", Icons.Filled.Settings, 3)
     )
 
     val glassColor = MaterialTheme.colorScheme.surface
@@ -514,14 +517,14 @@ private fun ScanAppBottomNav(onMeClick: () -> Unit = {}, onToolsClick: () -> Uni
                     icon = icon,
                     selected = selected == index,
                     onClick = {
-                        // Home/Files remain visual-only placeholders for now;
-                        // Tools opens the collage builder and Me opens
-                        // Settings — both navigate away immediately, so we
-                        // don't persist them as the "selected" tab the way a
-                        // real destination would.
+                        // Home/Backup remain visual-only placeholders for now;
+                        // Tools opens the collage builder and Settings opens
+                        // the settings screen — both navigate away
+                        // immediately, so we don't persist them as the
+                        // "selected" tab the way a real destination would.
                         when (index) {
-                            2 -> onToolsClick()
-                            3 -> onMeClick()
+                            1 -> onToolsClick()
+                            3 -> onSettingsClick()
                             else -> selected = index
                         }
                     },
