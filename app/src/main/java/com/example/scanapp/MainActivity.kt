@@ -5,7 +5,13 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
@@ -57,6 +63,22 @@ class MainActivity : ComponentActivity() {
     private var updateStatus by mutableStateOf(com.example.scanapp.ui.UpdateCheckUiStatus.IDLE)
     private var updateStatusMessage by mutableStateOf<String?>(null)
     private var latestReleaseUrl by mutableStateOf<String?>(null)
+    private var latestApkDownloadUrl by mutableStateOf<String?>(null)
+
+    // Settings toggles, loaded from UpdatePreferences in onCreate and written
+    // back through it on every change — see UpdatePreferences for why plain
+    // SharedPreferences rather than DataStore.
+    private var checkUpdatesOnStart by mutableStateOf(true)
+    private var autoInstallUpdates by mutableStateOf(false)
+
+    // Drives the standard "update available" popup shown after a silent
+    // startup check (distinct from updateStatus/updateStatusMessage, which
+    // drive the always-visible Settings row — a manual tap there already
+    // gets its own inline feedback and doesn't need this popup on top of it).
+    private var showUpdateAvailableDialog by mutableStateOf(false)
+    private var startupUpdateVersion by mutableStateOf("")
+    private var isDownloadingUpdate by mutableStateOf(false)
+    private var updateDownloadError by mutableStateOf<String?>(null)
 
     // Export screen's customization state, hoisted here (rather than living
     // inside ScanScreen's own `remember`) so it survives leaving and
@@ -101,6 +123,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        checkUpdatesOnStart = com.example.scanapp.update.UpdatePreferences.isCheckOnStartEnabled(applicationContext)
+        autoInstallUpdates = com.example.scanapp.update.UpdatePreferences.isAutoInstallEnabled(applicationContext)
+        if (checkUpdatesOnStart) {
+            checkForUpdateOnStartup()
+        }
+
         scannerLauncher = DocumentScannerLauncher(
             activity = this,
             onResult = { uris -> onScanCompleted(uris) },
@@ -117,6 +145,30 @@ class MainActivity : ComponentActivity() {
         observeLibrary()
 
         setContent {
+            // Without this, the system back gesture/button has no idea this
+            // app has its own in-app "pages" (currentScreen is a plain enum,
+            // not Jetpack Navigation) — Android's default behavior for an
+            // unhandled back press is to finish the Activity, so swiping back
+            // from DETAIL, SETTINGS, SCAN_EXPORT, or COLLAGE exited the whole
+            // app instead of returning to the previous screen.
+            //
+            // BackHandler intercepts that gesture and routes it through the
+            // exact same target each screen's own back ARROW already uses
+            // (see each screen's onBackClick below), so the two stay in sync
+            // by construction rather than needing a second navigation map to
+            // maintain. enabled = false on HOME lets the system handle back
+            // normally there — exiting the app from the root screen is the
+            // expected, standard behavior.
+            BackHandler(enabled = currentScreen != Screen.HOME) {
+                currentScreen = when (currentScreen) {
+                    Screen.DETAIL -> Screen.HOME
+                    Screen.SCAN_EXPORT -> if (openDocumentId != null) Screen.DETAIL else Screen.HOME
+                    Screen.SETTINGS -> Screen.HOME
+                    Screen.COLLAGE -> Screen.HOME
+                    Screen.HOME -> Screen.HOME // unreachable while enabled = false
+                }
+            }
+
             when (currentScreen) {
                 Screen.HOME -> HomeScreen(
                     recentDocuments = recentDocuments,
@@ -189,6 +241,16 @@ class MainActivity : ComponentActivity() {
                             startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
                         }
                     },
+                    checkUpdatesOnStart = checkUpdatesOnStart,
+                    onCheckUpdatesOnStartChange = { enabled ->
+                        checkUpdatesOnStart = enabled
+                        com.example.scanapp.update.UpdatePreferences.setCheckOnStartEnabled(applicationContext, enabled)
+                    },
+                    autoInstallUpdates = autoInstallUpdates,
+                    onAutoInstallUpdatesChange = { enabled ->
+                        autoInstallUpdates = enabled
+                        com.example.scanapp.update.UpdatePreferences.setAutoInstallEnabled(applicationContext, enabled)
+                    },
                     onBackClick = { currentScreen = Screen.HOME }
                 )
                 Screen.COLLAGE -> com.example.scanapp.ui.CollageScreen(
@@ -200,6 +262,61 @@ class MainActivity : ComponentActivity() {
                         updateCollagePreview(pageIds, template, pageSize, orientation)
                     },
                     onSaveClick = { saveCollageAsNewDocument() }
+                )
+            }
+
+            // Standard "update available" popup, shown after a silent
+            // startup check finds a newer release — floats above whichever
+            // screen the person happens to land on (usually HOME, since this
+            // fires right at launch), independent of the when() above.
+            if (showUpdateAvailableDialog) {
+                AlertDialog(
+                    onDismissRequest = { showUpdateAvailableDialog = false },
+                    title = { Text("Update available") },
+                    text = {
+                        Column {
+                            Text(
+                                "Version $startupUpdateVersion is available." +
+                                    if (isDownloadingUpdate) "\n\nDownloading…" else ""
+                            )
+                            updateDownloadError?.let { error ->
+                                Text(
+                                    "Download failed: $error",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            enabled = !isDownloadingUpdate,
+                            onClick = {
+                                val apkUrl = latestApkDownloadUrl
+                                if (apkUrl != null) {
+                                    downloadAndLaunchInstall(apkUrl)
+                                } else {
+                                    // No APK attached to this release (e.g. a
+                                    // source-only release) — fall back to the
+                                    // browser, same as the Settings row's own
+                                    // "Update" button does in that situation.
+                                    latestReleaseUrl?.let { url ->
+                                        startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+                                    }
+                                    showUpdateAvailableDialog = false
+                                }
+                            }
+                        ) {
+                            Text(if (latestApkDownloadUrl != null) "Update now" else "View release")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            enabled = !isDownloadingUpdate,
+                            onClick = { showUpdateAvailableDialog = false }
+                        ) {
+                            Text("Later")
+                        }
+                    }
                 )
             }
         }
@@ -538,6 +655,7 @@ class MainActivity : ComponentActivity() {
                     updateStatus = com.example.scanapp.ui.UpdateCheckUiStatus.UPDATE_AVAILABLE
                     updateStatusMessage = "Version ${result.latestVersion} is available (you have ${result.currentVersion})"
                     latestReleaseUrl = result.releaseUrl
+                    latestApkDownloadUrl = result.apkDownloadUrl
                 }
                 is com.example.scanapp.update.UpdateCheckResult.Error -> {
                     updateStatus = com.example.scanapp.ui.UpdateCheckUiStatus.ERROR
@@ -545,6 +663,105 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Silent version of [checkForUpdate], run once from onCreate when the
+     * "Check Updates on Start" toggle is on. Doesn't touch updateStatus —
+     * that drives the always-visible Settings row, and a check the user
+     * didn't ask for shouldn't make that row look like it's mid-check if
+     * they happen to be on the Settings screen already for something else.
+     *
+     * On finding an update: shows the standard "update available" popup, and
+     * if "Auto Install Updates" is also on, immediately starts downloading
+     * the APK so the install prompt is ready the moment the person dismisses
+     * (or even before — download proceeds independently of the popup).
+     */
+    private fun checkForUpdateOnStartup() {
+        lifecycleScope.launch {
+            val result = com.example.scanapp.update.UpdateChecker.checkForUpdate(
+                com.example.scanapp.BuildConfig.VERSION_NAME
+            )
+            if (result is com.example.scanapp.update.UpdateCheckResult.UpdateAvailable) {
+                latestReleaseUrl = result.releaseUrl
+                latestApkDownloadUrl = result.apkDownloadUrl
+                startupUpdateVersion = result.latestVersion
+                showUpdateAvailableDialog = true
+
+                if (autoInstallUpdates && result.apkDownloadUrl != null) {
+                    downloadAndLaunchInstall(result.apkDownloadUrl)
+                }
+            }
+            // UpToDate and Error are both silently ignored here — a startup
+            // check finding nothing wrong, or failing to reach GitHub (no
+            // connection, rate limit, etc.), shouldn't interrupt the person
+            // with a popup either way. They can always check manually from
+            // Settings if they want to see why.
+        }
+    }
+
+    /**
+     * Downloads the update APK and launches the system install prompt on it.
+     * Used by both the auto-install startup path and the popup's manual
+     * "Update now" button (same download, same install call either way —
+     * only the trigger differs).
+     */
+    private fun downloadAndLaunchInstall(apkUrl: String) {
+        lifecycleScope.launch {
+            isDownloadingUpdate = true
+            updateDownloadError = null
+            val result = com.example.scanapp.update.UpdateApkDownloader.download(applicationContext, apkUrl)
+            isDownloadingUpdate = false
+            when (result) {
+                is com.example.scanapp.update.ApkDownloadResult.Success -> {
+                    launchApkInstall(result.apkUri)
+                    // The system installer (or the "allow unknown sources"
+                    // settings screen, if that's what fired instead) is
+                    // about to cover this dialog anyway — leaving it open
+                    // underneath serves no purpose once that's launched.
+                    showUpdateAvailableDialog = false
+                }
+                is com.example.scanapp.update.ApkDownloadResult.Error -> {
+                    updateDownloadError = result.message
+                }
+            }
+        }
+    }
+
+    /**
+     * Fires the system package installer on a downloaded update APK.
+     *
+     * Uses the simpler ACTION_INSTALL_PACKAGE intent rather than the
+     * session-based PackageInstaller API — ACTION_INSTALL_PACKAGE has been
+     * deprecated since API 29 in favor of PackageInstaller, but still works
+     * on every supported version including targetSdk 35, and avoids the
+     * BroadcastReceiver + PendingIntent + session write/commit plumbing
+     * PackageInstaller needs for what's still just "show the install
+     * screen" — there's no silent-install capability either API gives a
+     * normal, non-system app, so the simpler option costs nothing here.
+     *
+     * Either way, Android still requires one thing no API can skip: the
+     * person tapping "Install" on the system's own confirmation screen.
+     */
+    private fun launchApkInstall(apkUri: Uri) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            // "Install unknown apps" hasn't been granted for this app yet.
+            // Send the person straight to the system screen for it instead
+            // of firing an install intent that Android will just block.
+            startActivity(
+                Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:$packageName".toUri())
+            )
+            return
+        }
+
+        val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(installIntent)
     }
 
     /**
