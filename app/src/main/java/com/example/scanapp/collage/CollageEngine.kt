@@ -147,11 +147,11 @@ object CollageTemplates {
  *
  * Mismatch handling (template cell count and selected page count won't
  * always match):
- *  - Fewer pages than cells: leftover cells are left blank (white), not an error.
- *  - More pages than cells: extra pages beyond the cell count are ignored.
- *    The picker UI should make this visually obvious rather than the
- *    compositor silently surprising the user, but the engine itself stays
- *    permissive so it never throws on a mismatched count.
+ * - Fewer pages than cells: leftover cells are left blank (white), not an error.
+ * - More pages than cells: extra pages beyond the cell count are ignored.
+ * The picker UI should make this visually obvious rather than the
+ * compositor silently surprising the user, but the engine itself stays
+ * permissive so it never throws on a mismatched count.
  *
  * Each page is scaled to FIT within its cell (preserving aspect ratio,
  * centered) rather than CROP — for documents, losing part of the page to a
