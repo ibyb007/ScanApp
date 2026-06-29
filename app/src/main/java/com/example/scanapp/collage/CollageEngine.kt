@@ -46,149 +46,129 @@ fun CollagePageSize.canvasPx(orientation: CollageOrientation): Pair<Int, Int> =
         CollageOrientation.LANDSCAPE -> heightPx to widthPx
     }
 
-/** One cell's position within the collage canvas, in normalized [0,1] coordinates. */
-data class CollageCell(val rect: RectF)
-
 /**
- * A user adjustment layered on top of a cell's default fit-to-cell framing:
- * extra zoom beyond the minimum that fills the cell, plus a pan offset
- * (in cell-relative fractions, so it scales correctly regardless of the
- * cell's actual pixel size at render time vs. export time).
- *
- * scale = 1f means "just fills the cell, no extra zoom" — the same framing
- * CollageCompositor already produced before any per-cell editing existed.
- * Values above 1f zoom in further (cropping more of the page to fill the
- * cell), matching the drag-handle resize gesture in the reference editor.
+ * A collage layout just says how many pictures share a single output page —
+ * nothing more. There is deliberately no fixed grid geometry here: "1 x 2"
+ * means two pictures placed freely on one page (each independently
+ * draggable/resizable by the user), not one page split into two locked
+ * halves. If more pictures are assigned than [picturesPerPage] can hold,
+ * additional pages are added automatically, each repeating this same count.
  */
-data class CollageCellTransform(
-    val scale: Float = 1f,
-    val offsetFractionX: Float = 0f,
-    val offsetFractionY: Float = 0f
-)
-
-/**
- * Which page (if any) occupies a given cell index, plus that cell's own
- * transform. Indexed by cell position within the template rather than by
- * page id, since the whole point of per-cell editing is that a cell can be
- * empty, reassigned, or independently adjusted regardless of selection order.
- */
-data class CollageCellAssignment(
-    val pageId: Long?,
-    val transform: CollageCellTransform = CollageCellTransform()
-)
-
-/**
- * A collage template is just a named arrangement of cells. The compositor
- * doesn't care how many pages were picked vs. how many cells exist — see
- * CollageCompositor for how mismatches are handled (extra cells stay blank,
- * extra pages are simply unused).
- */
-data class CollageTemplate(
+data class CollageLayout(
     val id: String,
     val displayName: String,
-    val cells: List<CollageCell>
+    val picturesPerPage: Int
 )
 
-/**
- * Built-in template set. Deliberately small and easy to extend — adding a
- * new layout later is just adding another entry with its own cell rects.
- * Cell rects intentionally leave a thin gutter between cells (rather than
- * exactly tiling 0..1) so pages don't visually merge into each other.
- */
-object CollageTemplates {
+/** Built-in layout set. "N x M" is just shorthand for "this many pictures per page". */
+object CollageLayouts {
+    val ONE_PER_PAGE = CollageLayout(id = "1", displayName = "1 per page", picturesPerPage = 1)
+    val TWO_PER_PAGE = CollageLayout(id = "1x2", displayName = "1 \u00d7 2", picturesPerPage = 2)
+    val THREE_PER_PAGE = CollageLayout(id = "1x3", displayName = "1 \u00d7 3", picturesPerPage = 3)
+    val FOUR_PER_PAGE = CollageLayout(id = "2x2", displayName = "2 \u00d7 2", picturesPerPage = 4)
 
-    private const val GUTTER = 0.015f
-
-    val TWO_BY_ONE = CollageTemplate(
-        id = "2x1",
-        displayName = "2 \u00d7 1",
-        cells = listOf(
-            CollageCell(RectF(0f, 0f, 0.5f - GUTTER, 1f)),
-            CollageCell(RectF(0.5f + GUTTER, 0f, 1f, 1f))
-        )
-    )
-
-    val ONE_BY_TWO = CollageTemplate(
-        id = "1x2",
-        displayName = "1 \u00d7 2",
-        cells = listOf(
-            CollageCell(RectF(0f, 0f, 1f, 0.5f - GUTTER)),
-            CollageCell(RectF(0f, 0.5f + GUTTER, 1f, 1f))
-        )
-    )
-
-    val TWO_BY_TWO = CollageTemplate(
-        id = "2x2",
-        displayName = "2 \u00d7 2",
-        cells = listOf(
-            CollageCell(RectF(0f, 0f, 0.5f - GUTTER, 0.5f - GUTTER)),
-            CollageCell(RectF(0.5f + GUTTER, 0f, 1f, 0.5f - GUTTER)),
-            CollageCell(RectF(0f, 0.5f + GUTTER, 0.5f - GUTTER, 1f)),
-            CollageCell(RectF(0.5f + GUTTER, 0.5f + GUTTER, 1f, 1f))
-        )
-    )
-
-    val THREE_BY_ONE = CollageTemplate(
-        id = "3x1",
-        displayName = "3 \u00d7 1",
-        cells = listOf(
-            CollageCell(RectF(0f, 0f, 1f / 3f - GUTTER, 1f)),
-            CollageCell(RectF(1f / 3f + GUTTER, 0f, 2f / 3f - GUTTER, 1f)),
-            CollageCell(RectF(2f / 3f + GUTTER, 0f, 1f, 1f))
-        )
-    )
-
-    val ALL = listOf(TWO_BY_ONE, ONE_BY_TWO, TWO_BY_TWO, THREE_BY_ONE)
+    val ALL = listOf(ONE_PER_PAGE, TWO_PER_PAGE, THREE_PER_PAGE, FOUR_PER_PAGE)
 }
 
 /**
- * Renders a list of page bitmaps into a single collage bitmap according to a
- * template's cell layout.
+ * One picture's free-form placement on a page, in normalized [0,1] fractions
+ * of the page's width/height. Unlike a fixed-cell layout, there's no implicit
+ * boundary clamping the picture to a slot — x/y/width/height are exactly the
+ * rectangle the user dragged and resized it to, so two pictures can be any
+ * size, anywhere, even overlapping if the user wants that.
+ */
+data class CollagePictureFrame(
+    val pageId: Long?,
+    val xFraction: Float,
+    val yFraction: Float,
+    val widthFraction: Float,
+    val heightFraction: Float
+) {
+    companion object {
+        fun empty(x: Float, y: Float, width: Float, height: Float) = CollagePictureFrame(
+            pageId = null,
+            xFraction = x,
+            yFraction = y,
+            widthFraction = width,
+            heightFraction = height
+        )
+    }
+}
+
+/**
+ * One output page's worth of picture frames. Index within [frames] has no
+ * special meaning beyond z-order (later entries draw on top) — frames carry
+ * their own position/size, they aren't slotted into a template.
+ */
+data class CollagePage(
+    val frames: List<CollagePictureFrame>
+)
+
+/**
+ * Produces sensible non-overlapping starting rectangles for N pictures on a
+ * blank page, so a freshly added page (or a layout switch) doesn't dump
+ * every picture in the exact same spot. These are just defaults — every
+ * value here is then freely draggable/resizable by the user afterward.
+ */
+object CollageDefaultArrangement {
+
+    private const val MARGIN = 0.04f
+    private const val GUTTER = 0.03f
+
+    fun ratesFor(count: Int): List<RectF> {
+        if (count <= 0) return emptyList()
+        if (count == 1) {
+            return listOf(RectF(MARGIN, MARGIN, 1f - MARGIN, 1f - MARGIN))
+        }
+
+        // Choose a near-square grid of rows/cols just to seed starting
+        // positions; once placed, each frame is independent of this grid.
+        val cols = kotlin.math.ceil(kotlin.math.sqrt(count.toDouble())).toInt().coerceAtLeast(1)
+        val rows = kotlin.math.ceil(count.toDouble() / cols).toInt().coerceAtLeast(1)
+
+        val usableWidth = 1f - 2 * MARGIN
+        val usableHeight = 1f - 2 * MARGIN
+        val cellWidth = (usableWidth - GUTTER * (cols - 1)) / cols
+        val cellHeight = (usableHeight - GUTTER * (rows - 1)) / rows
+
+        return (0 until count).map { index ->
+            val row = index / cols
+            val col = index % cols
+            val left = MARGIN + col * (cellWidth + GUTTER)
+            val top = MARGIN + row * (cellHeight + GUTTER)
+            RectF(left, top, left + cellWidth, top + cellHeight)
+        }
+    }
+}
+
+/**
+ * Renders a list of pages, each a free-form arrangement of picture frames,
+ * into one bitmap per page. Each picture is scaled to FIT within its own
+ * frame rectangle (preserving aspect ratio, centered within that
+ * rectangle) — for documents, losing part of the page to a crop is much
+ * worse than a sliver of empty margin inside the frame.
  *
- * Mismatch handling (template cell count and selected page count won't
- * always match):
- * - Fewer pages than cells: leftover cells are left blank (white), not an error.
- * - More pages than cells: extra pages beyond the cell count are ignored.
- * The picker UI should make this visually obvious rather than the
- * compositor silently surprising the user, but the engine itself stays
- * permissive so it never throws on a mismatched count.
- *
- * Each page is scaled to FIT within its cell (preserving aspect ratio,
- * centered) rather than CROP — for documents, losing part of the page to a
- * crop is much worse than a bit of empty margin within the cell.
+ * An empty frame (pageId == null) is simply skipped — it never reaches this
+ * point in practice since the UI only creates a page once at least one
+ * picture is assigned, but staying permissive here means this never throws
+ * on a partially-filled page either.
  */
 object CollageCompositor {
 
-    /** Legacy entry point: pages fill cells in order, no per-cell adjustment. Kept for callers not yet using per-cell editing. */
-    fun compose(
-        pages: List<Bitmap>,
-        template: CollageTemplate,
-        canvasWidthPx: Int,
-        canvasHeightPx: Int
-    ): Bitmap {
-        val result = Bitmap.createBitmap(canvasWidthPx, canvasHeightPx, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(result)
-        canvas.drawColor(Color.WHITE)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-
-        template.cells.forEachIndexed { index, cell ->
-            val page = pages.getOrNull(index) ?: return@forEachIndexed
-            drawPageInCell(canvas, paint, page, cell, canvasWidthPx, canvasHeightPx, CollageCellTransform())
-        }
-        return result
-    }
-
-    /**
-     * Per-cell-aware composition: each cell may have its own page assignment
-     * and its own zoom/pan transform, exactly mirroring what the live preview
-     * in CollageScreen rendered — this is what makes "Save" produce the same
-     * framing the person actually arranged, not just a default fit-to-cell
-     * version of it.
-     */
-    fun composeWithAssignments(
+    /** Composes every page in [pages] into one bitmap per page, in order. */
+    fun composePages(
         pageBitmaps: Map<Long, Bitmap>,
-        assignments: List<CollageCellAssignment>,
-        template: CollageTemplate,
+        pages: List<CollagePage>,
+        canvasWidthPx: Int,
+        canvasHeightPx: Int
+    ): List<Bitmap> = pages.map { page ->
+        composePage(pageBitmaps, page, canvasWidthPx, canvasHeightPx)
+    }
+
+    /** Composes a single page's frames into one bitmap. */
+    fun composePage(
+        pageBitmaps: Map<Long, Bitmap>,
+        page: CollagePage,
         canvasWidthPx: Int,
         canvasHeightPx: Int
     ): Bitmap {
@@ -197,64 +177,46 @@ object CollageCompositor {
         canvas.drawColor(Color.WHITE)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
-        template.cells.forEachIndexed { index, cell ->
-            val assignment = assignments.getOrNull(index) ?: return@forEachIndexed
-            val pageId = assignment.pageId ?: return@forEachIndexed // empty cell, nothing to draw
-            val page = pageBitmaps[pageId] ?: return@forEachIndexed
-            drawPageInCell(canvas, paint, page, cell, canvasWidthPx, canvasHeightPx, assignment.transform)
+        page.frames.forEach { frame ->
+            val pageId = frame.pageId ?: return@forEach
+            val bitmap = pageBitmaps[pageId] ?: return@forEach
+            drawPictureInFrame(canvas, paint, bitmap, frame, canvasWidthPx, canvasHeightPx)
         }
         return result
     }
 
     /**
-     * Draws one page into one cell, applying the base fit-to-cell framing
-     * (preserve aspect ratio, centered — for documents, a little empty
-     * margin beats losing part of the page to a crop) and then the user's
-     * extra scale/pan on top of that base framing.
+     * Draws one picture into its frame rectangle, fitting it within that
+     * rectangle (preserve aspect ratio, centered) rather than stretching or
+     * cropping to fill — the frame's own size IS the user's chosen size, so
+     * "fit" here just avoids distorting the picture's proportions inside it.
      */
-    private fun drawPageInCell(
+    private fun drawPictureInFrame(
         canvas: Canvas,
         paint: Paint,
-        page: Bitmap,
-        cell: CollageCell,
+        bitmap: Bitmap,
+        frame: CollagePictureFrame,
         canvasWidthPx: Int,
-        canvasHeightPx: Int,
-        transform: CollageCellTransform
+        canvasHeightPx: Int
     ) {
-        val cellLeft = cell.rect.left * canvasWidthPx
-        val cellTop = cell.rect.top * canvasHeightPx
-        val cellWidth = (cell.rect.right - cell.rect.left) * canvasWidthPx
-        val cellHeight = (cell.rect.bottom - cell.rect.top) * canvasHeightPx
+        val frameLeft = frame.xFraction * canvasWidthPx
+        val frameTop = frame.yFraction * canvasHeightPx
+        val frameWidth = frame.widthFraction * canvasWidthPx
+        val frameHeight = frame.heightFraction * canvasHeightPx
 
-        val pageAspect = page.width.toFloat() / page.height.toFloat()
-        val cellAspect = cellWidth / cellHeight
+        val bitmapAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        val frameAspect = frameWidth / frameHeight
 
-        val (baseWidth, baseHeight) = if (pageAspect > cellAspect) {
-            cellWidth to (cellWidth / pageAspect)
+        val (drawWidth, drawHeight) = if (bitmapAspect > frameAspect) {
+            frameWidth to (frameWidth / bitmapAspect)
         } else {
-            (cellHeight * pageAspect) to cellHeight
+            (frameHeight * bitmapAspect) to frameHeight
         }
 
-        // User's extra zoom on top of the base fit-to-cell size.
-        val drawWidth = baseWidth * transform.scale
-        val drawHeight = baseHeight * transform.scale
+        val drawLeft = frameLeft + (frameWidth - drawWidth) / 2f
+        val drawTop = frameTop + (frameHeight - drawHeight) / 2f
 
-        // Centered placement, then the user's pan offset — expressed as a
-        // fraction of cell size so it's resolution-independent between the
-        // (usually smaller) preview render and this (usually larger) export
-        // canvas.
-        val baseLeft = cellLeft + (cellWidth - drawWidth) / 2f
-        val baseTop = cellTop + (cellHeight - drawHeight) / 2f
-        val drawLeft = baseLeft + transform.offsetFractionX * cellWidth
-        val drawTop = baseTop + transform.offsetFractionY * cellHeight
-
-        // Clip to the cell's own bounds — zooming in (scale > 1) makes the
-        // drawn image larger than the cell, and without clipping it would
-        // bleed into neighboring cells rather than just cropping within its own.
-        canvas.save()
-        canvas.clipRect(cellLeft, cellTop, cellLeft + cellWidth, cellTop + cellHeight)
         val destRect = RectF(drawLeft, drawTop, drawLeft + drawWidth, drawTop + drawHeight)
-        canvas.drawBitmap(page, null, destRect, paint)
-        canvas.restore()
+        canvas.drawBitmap(bitmap, null, destRect, paint)
     }
 }
