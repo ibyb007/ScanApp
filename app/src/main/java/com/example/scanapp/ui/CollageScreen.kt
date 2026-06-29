@@ -225,7 +225,7 @@ fun CollageScreen(
                     }
                     Text("CamScanner Workspace Mode", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = { onSaveClick(selectedTemplate, selectedPageSize, selectedOrientation, assignments) }) {
-                        Icon(Icons.Filled.Check, tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Filled.Check, contentDescription = "Save", tint = MaterialTheme.colorScheme.primary)
                     }
                 }
 
@@ -506,7 +506,7 @@ private fun CollageBottomDock(
                         FilterChip(
                             selected = false,
                             onClick = onOrientationToggle,
-                            leading = {
+                            leadingIcon = {
                                 Icon(
                                     if (selectedOrientation == CollageOrientation.PORTRAIT) Icons.Filled.CropPortrait else Icons.Filled.CropLandscape,
                                     contentDescription = null,
