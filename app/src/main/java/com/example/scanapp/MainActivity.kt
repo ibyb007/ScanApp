@@ -94,17 +94,12 @@ class MainActivity : ComponentActivity() {
     private var openDocumentTitle by mutableStateOf("")
     private var openDocumentPages by mutableStateOf<List<DetailPage>>(emptyList())
 
-    // Collage screen state.
+    // Collage screen state. The live grid (template, page size, orientation,
+    // per-cell assignments) is now owned internally by CollageScreen's own
+    // remember state — MainActivity only needs the page library to hand it,
+    // and a saving flag for the one-shot compose-and-save at the end.
     private var collagePickerPages by mutableStateOf<List<com.example.scanapp.ui.CollagePickerPage>>(emptyList())
-    private var collagePreviewBitmap by mutableStateOf<android.graphics.Bitmap?>(null)
-    private var isComposingCollage by mutableStateOf(false)
-    private var collageSelectedPageIds: List<Long> = emptyList()
-    private var collageSelectedTemplate: com.example.scanapp.collage.CollageTemplate =
-        com.example.scanapp.collage.CollageTemplates.ALL.first()
-    private var collageSelectedPageSize: com.example.scanapp.collage.CollagePageSize =
-        com.example.scanapp.collage.CollagePageSize.A4
-    private var collageSelectedOrientation: com.example.scanapp.collage.CollageOrientation =
-        com.example.scanapp.collage.CollageOrientation.PORTRAIT
+    private var isSavingCollage by mutableStateOf(false)
 
     /**
      * The scanner launcher is reused for three distinct flows (new document,
@@ -255,13 +250,11 @@ class MainActivity : ComponentActivity() {
                 )
                 Screen.COLLAGE -> com.example.scanapp.ui.CollageScreen(
                     allPages = collagePickerPages,
-                    previewBitmap = collagePreviewBitmap,
-                    isComposing = isComposingCollage,
+                    isSaving = isSavingCollage,
                     onBackClick = { currentScreen = Screen.HOME },
-                    onSelectionOrTemplateChanged = { pageIds, template, pageSize, orientation ->
-                        updateCollagePreview(pageIds, template, pageSize, orientation)
-                    },
-                    onSaveClick = { saveCollageAsNewDocument() }
+                    onSaveClick = { template, pageSize, orientation, assignments ->
+                        saveCollageAsNewDocument(template, pageSize, orientation, assignments)
+                    }
                 )
             }
 
@@ -450,65 +443,64 @@ class MainActivity : ComponentActivity() {
                     documentTitle = withTitle.documentTitle
                 )
             }
-            collagePreviewBitmap = null
-            collageSelectedPageIds = emptyList()
+            isSavingCollage = false
             currentScreen = Screen.COLLAGE
         }
     }
 
     /**
-     * Re-composes the live preview whenever the user changes their page
-     * selection or template. Runs on a background dispatcher since decoding
-     * several full-res page bitmaps + compositing isn't free, but is fast
-     * enough (a handful of JPEGs, fixed output canvas size) to redo on every
-     * change without needing debouncing for a reasonable number of pages.
+     * Called once, when the person taps Save on the collage screen — not on
+     * every edit, unlike the old preview-recompute approach this replaced.
+     * The live grid in CollageScreen now renders its own preview directly in
+     * Compose as the person drags/resizes, so there's nothing to keep
+     * recomposing in the background here; this only needs to flatten the
+     * final arrangement into a real bitmap once, for saving.
+     *
+     * Decodes only the pages actually assigned to a cell (not the whole
+     * library) — composeWithAssignments needs a pageId->Bitmap map, not a
+     * flat ordered list, since cells can be reassigned/cleared independently
+     * of selection order.
      */
-    private fun updateCollagePreview(
-        selectedPageIds: List<Long>,
+    private fun saveCollageAsNewDocument(
         template: com.example.scanapp.collage.CollageTemplate,
         pageSize: com.example.scanapp.collage.CollagePageSize,
-        orientation: com.example.scanapp.collage.CollageOrientation
+        orientation: com.example.scanapp.collage.CollageOrientation,
+        assignments: List<com.example.scanapp.collage.CollageCellAssignment>
     ) {
-        collageSelectedPageIds = selectedPageIds
-        collageSelectedTemplate = template
-        collageSelectedPageSize = pageSize
-        collageSelectedOrientation = orientation
+        val assignedPageIds = assignments.mapNotNull { it.pageId }.distinct()
+        if (assignedPageIds.isEmpty()) return
 
-        if (selectedPageIds.isEmpty()) {
-            collagePreviewBitmap = null
-            return
-        }
-
+        isSavingCollage = true
         lifecycleScope.launch {
-            isComposingCollage = true
-            val result = withContext(Dispatchers.IO) {
-                val pageById = collagePickerPages.associateBy { it.pageId }
-                val bitmaps = selectedPageIds.mapNotNull { id ->
-                    pageById[id]?.uri?.path?.let { path -> BitmapFactory.decodeFile(path) }
-                }
-                if (bitmaps.isEmpty()) {
+            val title = "Collage ${SimpleDateFormat("MM-dd-yyyy HH.mm", Locale.getDefault()).format(Date())}"
+            val pageById = collagePickerPages.associateBy { it.pageId }
+
+            val bitmap = withContext(Dispatchers.IO) {
+                val pageBitmaps = assignedPageIds.mapNotNull { id ->
+                    val path = pageById[id]?.uri?.path ?: return@mapNotNull null
+                    val decoded = BitmapFactory.decodeFile(path) ?: return@mapNotNull null
+                    id to decoded
+                }.toMap()
+
+                if (pageBitmaps.isEmpty()) {
                     null
                 } else {
                     val (canvasWidthPx, canvasHeightPx) = pageSize.canvasPx(orientation)
-                    com.example.scanapp.collage.CollageCompositor.compose(
-                        pages = bitmaps,
+                    com.example.scanapp.collage.CollageCompositor.composeWithAssignments(
+                        pageBitmaps = pageBitmaps,
+                        assignments = assignments,
                         template = template,
                         canvasWidthPx = canvasWidthPx,
                         canvasHeightPx = canvasHeightPx
                     )
                 }
             }
-            collagePreviewBitmap = result
-            isComposingCollage = false
-        }
-    }
 
-    private fun saveCollageAsNewDocument() {
-        val bitmap = collagePreviewBitmap ?: return
-        lifecycleScope.launch {
-            val title = "Collage ${SimpleDateFormat("MM-dd-yyyy HH.mm", Locale.getDefault()).format(Date())}"
-            repository.saveBitmapAsNewDocument(bitmap, title)
-            currentScreen = Screen.HOME
+            if (bitmap != null) {
+                repository.saveBitmapAsNewDocument(bitmap, title)
+                currentScreen = Screen.HOME
+            }
+            isSavingCollage = false
         }
     }
 
