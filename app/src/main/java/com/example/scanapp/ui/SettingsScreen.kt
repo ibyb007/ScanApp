@@ -34,6 +34,10 @@ fun SettingsScreen(
     updateStatusMessage: String? = null,
     onCheckForUpdateClick: () -> Unit,
     onOpenReleaseClick: () -> Unit = {},
+    checkUpdatesOnStart: Boolean = true,
+    onCheckUpdatesOnStartChange: (Boolean) -> Unit = {},
+    autoInstallUpdates: Boolean = false,
+    onAutoInstallUpdatesChange: (Boolean) -> Unit = {},
     onBackClick: () -> Unit
 ) {
     Scaffold(
@@ -147,6 +151,38 @@ fun SettingsScreen(
                 headlineContent = { Text("Version") },
                 supportingContent = { Text("$versionName (build $versionCode)") },
                 leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) }
+            )
+
+            // Check Updates on Start — silently checks GitHub Releases once
+            // at launch and shows the standard "update available" popup if
+            // a newer release is found, independent of this row's own
+            // "Check for update" status above (which only reflects manual
+            // taps, not this background check).
+            ListItem(
+                headlineContent = { Text("Check Updates on Start") },
+                supportingContent = { Text("Automatically check for updates when app starts") },
+                trailingContent = {
+                    Switch(checked = checkUpdatesOnStart, onCheckedChange = onCheckUpdatesOnStartChange)
+                }
+            )
+
+            // Auto Install Updates — when the startup check (above) finds a
+            // newer release, downloads it and opens the system install
+            // prompt automatically rather than waiting for a tap on the
+            // popup's "Update now" button. Android still requires the
+            // person to confirm the actual install themselves — no API
+            // available to a normal app skips that — so this saves the
+            // download-and-open-prompt steps, not the final tap.
+            ListItem(
+                headlineContent = { Text("Auto Install Updates") },
+                supportingContent = { Text("Download and prompt to install automatically when found") },
+                trailingContent = {
+                    Switch(
+                        checked = autoInstallUpdates,
+                        onCheckedChange = onAutoInstallUpdatesChange,
+                        enabled = checkUpdatesOnStart
+                    )
+                }
             )
 
             Spacer(Modifier.height(8.dp))
