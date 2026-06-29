@@ -94,6 +94,36 @@ class DocumentRepository(private val context: Context) {
         }
 
     /**
+     * Saves a list of already-composed bitmaps (a multi-page collage, one
+     * bitmap per output page) as a brand new document with one page per
+     * bitmap, in the given order. Used when a collage layout produces more
+     * pages than fit a single bitmap — e.g. a "2 per page" layout with more
+     * pictures assigned than one page holds.
+     */
+    suspend fun saveBitmapsAsNewDocument(bitmaps: List<android.graphics.Bitmap>, title: String): Long =
+        withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val documentId = dao.insertDocument(
+                DocumentEntity(
+                    title = title,
+                    createdAtMillis = now,
+                    modifiedAtMillis = now,
+                    accessedAtMillis = now
+                )
+            )
+            val docDir = File(scansRoot, documentId.toString()).apply { mkdirs() }
+            val pageEntities = bitmaps.mapIndexed { index, bitmap ->
+                val destFile = File(docDir, uniquePageFileName())
+                destFile.outputStream().use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                }
+                DocumentPageEntity(documentId = documentId, pageIndex = index, filePath = destFile.absolutePath)
+            }
+            dao.insertPages(pageEntities)
+            documentId
+        }
+
+    /**
      * Save freshly scanned page URIs (from ML Kit, which returns content:// or
      * file:// URIs into its own cache) as a new persistent Document. Each page
      * is re-encoded as a high-quality JPEG (quality 95 — this is the source
