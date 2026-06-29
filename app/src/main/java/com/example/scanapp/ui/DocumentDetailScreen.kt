@@ -16,11 +16,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,7 +53,7 @@ fun DocumentDetailScreen(
     onAddPagesClick: () -> Unit,
     onDeletePage: (DetailPage) -> Unit,
     onReorder: (List<Long>) -> Unit,
-    onExportSelected: (List<DetailPage>) -> Unit
+    onExportSelected: (List<DetailPage>) -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
@@ -97,7 +98,7 @@ fun DocumentDetailScreen(
                             val selectedObjects = pages.filter { it.pageId in selectedPages }
                             onExportSelected(selectedObjects)
                         }) {
-                            Icon(Icons.Filled.UploadFile, contentDescription = "Export Selected")
+                            Icon(Icons.Filled.FileDownload, contentDescription = "Export Selected")
                         }
                     } else {
                         IconButton(onClick = { showRenameDialog = true }) {
@@ -136,7 +137,6 @@ fun DocumentDetailScreen(
                             .fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // Revamped Add Pages Button to look exactly like the primary filled Export button
                         Button(
                             onClick = onAddPagesClick,
                             modifier = Modifier
@@ -153,7 +153,6 @@ fun DocumentDetailScreen(
                             Text("Add pages", fontWeight = FontWeight.Bold)
                         }
 
-                        // Export Button
                         Button(
                             onClick = onExportClick,
                             modifier = Modifier
@@ -161,7 +160,7 @@ fun DocumentDetailScreen(
                                 .height(48.dp),
                             shape = RoundedCornerShape(24.dp)
                         ) {
-                            Icon(Icons.Filled.UploadFile, contentDescription = null)
+                            Icon(Icons.Filled.FileDownload, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text("Export", fontWeight = FontWeight.Bold)
                         }
@@ -170,7 +169,6 @@ fun DocumentDetailScreen(
             }
         }
     ) { paddingValues ->
-        // Dynamic Grid adjustments based on size limits
         val gridCells = if (pages.size <= 2) GridCells.Fixed(1) else GridCells.Fixed(2)
 
         Box(
@@ -225,7 +223,6 @@ fun DocumentDetailScreen(
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // Top bar inside thumbnail indicators
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -233,7 +230,6 @@ fun DocumentDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.Top
                         ) {
-                            // Index Badge
                             Surface(
                                 color = Color.Black.copy(alpha = 0.6f),
                                 shape = CircleShape,
@@ -249,7 +245,6 @@ fun DocumentDetailScreen(
                                 }
                             }
 
-                            // Delete quick cross option button
                             if (!selectionMode) {
                                 Surface(
                                     color = Color.Black.copy(alpha = 0.6f),
