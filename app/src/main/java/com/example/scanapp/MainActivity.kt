@@ -266,8 +266,8 @@ class MainActivity : ComponentActivity() {
                         allPages = collagePickerPages,
                         isSaving = isSavingCollage,
                         onBackClick = { currentScreen = Screen.HOME },
-                        onSaveClick = { template, pageSize, orientation, assignments ->
-                            saveCollageAsNewDocument(template, pageSize, orientation, assignments)
+                        onSaveClick = { layout, pageSize, orientation, pages ->
+                            saveCollageAsNewDocument(layout, pageSize, orientation, pages)
                         }
                     )
                 }
@@ -422,12 +422,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun saveCollageAsNewDocument(
-        template: com.example.scanapp.collage.CollageTemplate,
+        layout: com.example.scanapp.collage.CollageLayout,
         pageSize: com.example.scanapp.collage.CollagePageSize,
         orientation: com.example.scanapp.collage.CollageOrientation,
-        assignments: List<com.example.scanapp.collage.CollageCellAssignment>
+        pages: List<com.example.scanapp.collage.CollagePage>
     ) {
-        val assignedPageIds = assignments.mapNotNull { it.pageId }.distinct()
+        val assignedPageIds = pages.flatMap { it.frames }.mapNotNull { it.pageId }.distinct()
         if (assignedPageIds.isEmpty()) return
 
         isSavingCollage = true
@@ -435,7 +435,7 @@ class MainActivity : ComponentActivity() {
             val title = "Collage ${SimpleDateFormat("MM-dd-yyyy HH.mm", Locale.getDefault()).format(Date())}"
             val pageById = collagePickerPages.associateBy { it.pageId }
 
-            val bitmap = withContext(Dispatchers.IO) {
+            val bitmaps = withContext(Dispatchers.IO) {
                 val pageBitmaps = assignedPageIds.mapNotNull { id ->
                     val path = pageById[id]?.uri?.path ?: return@mapNotNull null
                     val decoded = BitmapFactory.decodeFile(path) ?: return@mapNotNull null
@@ -443,21 +443,20 @@ class MainActivity : ComponentActivity() {
                 }.toMap()
 
                 if (pageBitmaps.isEmpty()) {
-                    null
+                    emptyList()
                 } else {
                     val (canvasWidthPx, canvasHeightPx) = pageSize.canvasPx(orientation)
-                    com.example.scanapp.collage.CollageCompositor.composeWithAssignments(
+                    com.example.scanapp.collage.CollageCompositor.composePages(
                         pageBitmaps = pageBitmaps,
-                        assignments = assignments,
-                        template = template,
+                        pages = pages,
                         canvasWidthPx = canvasWidthPx,
                         canvasHeightPx = canvasHeightPx
                     )
                 }
             }
 
-            if (bitmap != null) {
-                repository.saveBitmapAsNewDocument(bitmap, title)
+            if (bitmaps.isNotEmpty()) {
+                repository.saveBitmapsAsNewDocument(bitmaps, title)
                 currentScreen = Screen.HOME
             }
             isSavingCollage = false
