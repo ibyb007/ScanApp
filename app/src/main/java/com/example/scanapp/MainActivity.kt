@@ -98,6 +98,7 @@ private enum class Screen { HOME, DETAIL, SCAN_EXPORT, SETTINGS, COLLAGE }
 class MainActivity : ComponentActivity() {
 
     private lateinit var scannerLauncher: DocumentScannerLauncher
+    private lateinit var pdfImportLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
     private val exportEngine by lazy { ExportEngine(applicationContext) }
     private val repository by lazy { DocumentRepository(applicationContext) }
 
@@ -105,6 +106,8 @@ class MainActivity : ComponentActivity() {
     private var scannedPages by mutableStateOf<List<Uri>>(emptyList())
     private var isExporting by mutableStateOf(false)
     private var exportResultText by mutableStateOf<String?>(null)
+    private var isImportingPdf by mutableStateOf(false)
+    private var pdfImportError by mutableStateOf<String?>(null)
     private var recentDocuments by mutableStateOf<List<RecentDocument>>(emptyList())
     private var homeSearchQuery by mutableStateOf("")
     private var homeSortBy by mutableStateOf(DocumentSortBy.DATE_MODIFIED)
@@ -164,6 +167,14 @@ class MainActivity : ComponentActivity() {
             pageLimit = 1
         )
 
+        pdfImportLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) {
+                onPdfPicked(uri)
+            }
+        }
+
         observeLibrary()
 
         setContent {
@@ -182,6 +193,9 @@ class MainActivity : ComponentActivity() {
                     Screen.HOME -> HomeScreen(
                         recentDocuments = recentDocuments,
                         onScanClick = { scannerLauncher.launch() },
+                        onImportPdfClick = { pdfImportLauncher.launch(arrayOf("application/pdf")) },
+                        isImportingPdf = isImportingPdf,
+                        pdfImportError = pdfImportError,
                         onDocumentClick = { doc -> openDocumentDetail(doc) },
                         onRename = { doc, newTitle -> renameDocument(doc, newTitle) },
                         onDelete = { doc -> deleteDocument(doc) },
@@ -366,6 +380,45 @@ class MainActivity : ComponentActivity() {
             pageCount = pageCount,
             modifiedAtMillis = doc.modifiedAtMillis
         )
+    }
+
+    private fun onPdfPicked(uri: Uri) {
+        if (isImportingPdf) return
+        isImportingPdf = true
+        pdfImportError = null
+
+        lifecycleScope.launch {
+            try {
+                val pageUris = withContext(Dispatchers.IO) {
+                    com.example.scanapp.scan.PdfImporter.importPagesAsJpegs(this@MainActivity, uri)
+                }
+
+                val title = pdfDisplayNameOrNull(uri)
+                    ?: "Imported PDF ${SimpleDateFormat("MM-dd-yyyy HH.mm", Locale.getDefault()).format(Date())}"
+
+                val documentId = repository.saveNewDocument(pageUris, title)
+                repository.touchAccessed(documentId)
+                openDocumentId = documentId
+                refreshOpenDocument(documentId)
+                currentScreen = Screen.DETAIL
+            } catch (e: Exception) {
+                pdfImportError = "PDF import failed: ${e.message}"
+            } finally {
+                isImportingPdf = false
+                withContext(Dispatchers.IO) {
+                    com.example.scanapp.scan.PdfImporter.cleanupScratchFiles(this@MainActivity)
+                }
+            }
+        }
+    }
+
+    /** Looks up the picked PDF's display name (without extension) to use as the document title. */
+    private fun pdfDisplayNameOrNull(uri: Uri): String? {
+        return contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameColumn = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (nameColumn < 0 || !cursor.moveToFirst()) return null
+            cursor.getString(nameColumn)?.removeSuffix(".pdf")?.removeSuffix(".PDF")?.ifBlank { null }
+        }
     }
 
     private fun onScanCompleted(uris: List<Uri>) {

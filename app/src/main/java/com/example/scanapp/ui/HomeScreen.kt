@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,6 +52,9 @@ data class RecentDocument(
 fun HomeScreen(
     recentDocuments: List<RecentDocument>,
     onScanClick: () -> Unit,
+    onImportPdfClick: () -> Unit = {},
+    isImportingPdf: Boolean = false,
+    pdfImportError: String? = null,
     onDocumentClick: (RecentDocument) -> Unit,
     onRename: (RecentDocument, newTitle: String) -> Unit = { _, _ -> },
     onDelete: (RecentDocument) -> Unit = {},
@@ -75,6 +79,13 @@ fun HomeScreen(
     var searchExpanded by remember { mutableStateOf(searchQuery.isNotEmpty()) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(pdfImportError) {
+        if (pdfImportError != null) {
+            snackbarHostState.showSnackbar(pdfImportError)
+        }
+    }
+
     fun clearSelection() {
         selectionMode = false
         selectedIds = emptySet()
@@ -90,6 +101,7 @@ fun HomeScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             if (selectionMode) {
                 TopAppBar(
@@ -120,8 +132,23 @@ fun HomeScreen(
         },
         floatingActionButton = {
             if (!selectionMode) {
-                FloatingActionButton(onClick = onScanClick) {
-                    Icon(Icons.Filled.CameraAlt, contentDescription = "Scan document")
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    SmallFloatingActionButton(
+                        onClick = { if (!isImportingPdf) onImportPdfClick() }
+                    ) {
+                        if (isImportingPdf) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Filled.UploadFile, contentDescription = "Import PDF")
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    FloatingActionButton(onClick = onScanClick) {
+                        Icon(Icons.Filled.CameraAlt, contentDescription = "Scan document")
+                    }
                 }
             }
         }
@@ -226,7 +253,7 @@ fun HomeScreen(
                             },
                             onMoreClick = { actionSheetTarget = doc }
                         )
-                        HorizontalDivider(modifier = Modifier.padding(start = 96.dp))
+                        HorizontalDivider(modifier = Modifier.padding(start = 116.dp))
                     }
                 }
             }
@@ -369,8 +396,8 @@ private fun RecentDocumentRow(
 
         Box(
             modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .size(84.dp)
+                .clip(RoundedCornerShape(14.dp))
         ) {
             if (doc.thumbnailUri != null) {
                 Image(
