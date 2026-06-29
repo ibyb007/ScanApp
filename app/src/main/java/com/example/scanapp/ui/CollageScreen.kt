@@ -1,3 +1,4 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
 package com.example.scanapp.ui
 
 import android.net.Uri
@@ -57,7 +58,6 @@ data class CollagePickerPage(
 
 private enum class CollageDockTab { PAGE, TEMPLATE, SIZE }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CollageScreen(
     allPages: List<CollagePickerPage>,
@@ -339,7 +339,7 @@ private fun CollageLiveGrid(
                     cellHeightDp = cellHeightDp,
                     onTap = { onCellTap(index) },
                     onTransformChange = { transform -> onCellTransformChange(index, transform) },
-                    onClear = { onClear(index) },
+                    onClear = { onCellClear(index) },
                     modifier = Modifier
                         .offset(x = cellLeftDp.dp, y = cellTopDp.dp)
                         .size(width = cellWidthDp.dp, height = cellHeightDp.dp)
@@ -495,7 +495,7 @@ private fun CollageBottomDock(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    rowItems(CollagePageSize.entries.toList(), key = { it.name }) { size ->
+                    rowItems(CollagePageSize.values().toList(), key = { it.name }) { size ->
                         FilterChip(
                             selected = size == selectedPageSize,
                             onClick = { onPageSizeChange(size) },
@@ -569,7 +569,6 @@ private fun DockTabButton(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PagePickerSheet(
     allPages: List<CollagePickerPage>,
