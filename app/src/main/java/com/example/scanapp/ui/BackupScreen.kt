@@ -31,7 +31,10 @@ fun BackupScreen(
     statusMessage: String?,
     onLocalBackup: (password: String) -> Unit,
     onLocalRestore: (password: String) -> Unit,
-    onTelegramSync: (token: String, chat: String, pass: String) -> Unit
+    onTelegramSync: (token: String, chat: String, pass: String) -> Unit,
+    onHomeClick: () -> Unit = {},
+    onToolsClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {}
 ) {
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -40,9 +43,21 @@ fun BackupScreen(
     val scrollState = rememberScrollState()
     val context = LocalContext.current
 
+    Scaffold(
+        bottomBar = {
+            ScanAppBottomNav(
+                selectedIndex = 2,
+                onHomeClick = onHomeClick,
+                onToolsClick = onToolsClick,
+                onSettingsClick = onSettingsClick,
+                onBackupClick = {}
+            )
+        }
+    ) { padding ->
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .padding(padding)
             .padding(16.dp)
             .verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -165,5 +180,6 @@ fun BackupScreen(
                 }
             }
         }
+    }
     }
 }

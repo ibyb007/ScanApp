@@ -38,7 +38,10 @@ fun SettingsScreen(
     onCheckUpdatesOnStartChange: (Boolean) -> Unit = {},
     autoInstallUpdates: Boolean = false,
     onAutoInstallUpdatesChange: (Boolean) -> Unit = {},
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onHomeClick: () -> Unit = {},
+    onToolsClick: () -> Unit = {},
+    onBackupClick: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -57,6 +60,15 @@ fun SettingsScreen(
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
                 }
+            )
+        },
+        bottomBar = {
+            ScanAppBottomNav(
+                selectedIndex = 3,
+                onHomeClick = onHomeClick,
+                onToolsClick = onToolsClick,
+                onBackupClick = onBackupClick,
+                onSettingsClick = {}
             )
         }
     ) { padding ->

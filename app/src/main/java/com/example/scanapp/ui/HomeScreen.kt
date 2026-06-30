@@ -460,8 +460,13 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier, isSearching: Boolea
 }
 
 @Composable
-private fun ScanAppBottomNav(onSettingsClick: () -> Unit = {}, onToolsClick: () -> Unit = {}, onBackupClick: () -> Unit = {}) {
-    var selected by remember { mutableStateOf(0) }
+internal fun ScanAppBottomNav(
+    selectedIndex: Int = 0,
+    onHomeClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {},
+    onToolsClick: () -> Unit = {},
+    onBackupClick: () -> Unit = {}
+) {
     val items = listOf(
         Triple("Home", Icons.Filled.Home, 0),
         Triple("Tools", Icons.Filled.Description, 1),
@@ -479,13 +484,13 @@ private fun ScanAppBottomNav(onSettingsClick: () -> Unit = {}, onToolsClick: () 
     ) {
         items.forEach { (label, icon, index) ->
             NavigationBarItem(
-                selected = selected == index,
+                selected = selectedIndex == index,
                 onClick = {
                     when (index) {
+                        0 -> onHomeClick()
                         1 -> onToolsClick()
                         2 -> onBackupClick()
                         3 -> onSettingsClick()
-                        else -> selected = index
                     }
                 },
                 icon = { Icon(icon, contentDescription = label) },
