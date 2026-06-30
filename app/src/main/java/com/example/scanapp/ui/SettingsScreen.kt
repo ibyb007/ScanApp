@@ -1,5 +1,10 @@
 package com.example.scanapp.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -7,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NewReleases
@@ -19,8 +23,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 /** What the update-check row should currently show. */
 enum class UpdateCheckUiStatus { IDLE, CHECKING, UP_TO_DATE, UPDATE_AVAILABLE, ERROR }
@@ -201,26 +208,10 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
 
-            SectionLabel("Coming soon")
+            SectionLabel("Developer")
             Spacer(Modifier.height(4.dp))
 
-            // Placeholder for the upcoming Telegram-based cloud sync feature.
-            // Non-interactive for now — just reserves the spot in the menu
-            // and sets expectations until the real feature is wired up.
-            ListItem(
-                headlineContent = { Text("Telegram cloud sync") },
-                supportingContent = { Text("Back up and sync your scans via Telegram — coming soon") },
-                leadingContent = { Icon(Icons.Filled.CloudQueue, contentDescription = null) },
-                trailingContent = {
-                    AssistChip(onClick = {}, enabled = false, label = { Text("Soon") })
-                }
-            )
-
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(8.dp))
-
-            SectionLabel("Developer")
+            DeveloperCreditLine()
             Spacer(Modifier.height(4.dp))
 
             DeveloperInfoSection()
@@ -237,6 +228,94 @@ private fun SectionLabel(text: String) {
         fontWeight = FontWeight.Bold
     )
 }
+
+/**
+ * Credit line shown in the Developer section: "This app is Developed by Bony Biswas".
+ *
+ * "Bony" and "Biswas" both start off-screen at the extreme right, as if shoved
+ * in from outside the screen. They slam inward past their final resting
+ * spot, overlap/collide with each other near the middle, bounce off that
+ * collision a couple of times (decreasing each bounce, like they're
+ * scuffling), then settle into their final positions. The whole sequence
+ * runs over a deliberately long window so the collision reads clearly.
+ */
+@Composable
+private fun DeveloperCreditLine() {
+    // Keyframe values are absolute horizontal offsets (in dp) from each
+    // word's final settled position. Large positive = far off-screen right.
+    val bonyOffset = remember { Animatable(900f) }
+    val biswasOffset = remember { Animatable(900f) }
+
+    LaunchedEffect(Unit) {
+        launch {
+            bonyOffset.animateTo(
+                targetValue = 0f,
+                animationSpec = keyframes {
+                    durationMillis = 3200
+                    900f at 0 using LinearOutSlowInEasing
+                    -60f at 900 using FastOutLinearInEasing   // slams past center, into Biswas — collision
+                    50f at 1500 using FastOutSlowInEasing      // bounced back from the impact
+                    -28f at 2050 using FastOutSlowInEasing     // scuffle: lunges back in
+                    14f at 2550 using FastOutSlowInEasing      // smaller bounce
+                    -5f at 2900 using FastOutSlowInEasing
+                    0f at 3200
+                }
+            )
+        }
+        launch {
+            biswasOffset.animateTo(
+                targetValue = 0f,
+                animationSpec = keyframes {
+                    durationMillis = 3200
+                    900f at 0 using LinearOutSlowInEasing
+                    -80f at 950 using FastOutLinearInEasing    // slams further left, deep overlap with Bony
+                    65f at 1550 using FastOutSlowInEasing
+                    -36f at 2100 using FastOutSlowInEasing
+                    18f at 2600 using FastOutSlowInEasing
+                    -6f at 2950 using FastOutSlowInEasing
+                    0f at 3200
+                }
+            )
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = "This app is Developed by",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(2.dp))
+        Row {
+            Text(
+                text = "Bony",
+                fontWeight = FontWeight.ExtraBold,
+                fontStyle = FontStyle.Italic,
+                fontSize = 22.sp,
+                color = GoldColor,
+                modifier = Modifier.offset(x = bonyOffset.value.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "Biswas",
+                fontWeight = FontWeight.ExtraBold,
+                fontStyle = FontStyle.Italic,
+                fontSize = 22.sp,
+                color = GoldColor,
+                modifier = Modifier.offset(x = biswasOffset.value.dp)
+            )
+        }
+    }
+}
+
+/** Metallic gold used for the developer credit name — reads clearly on a light surface. */
+private val GoldColor = Color(0xFFCC9A06)
 
 /** Developer contact rows: Telegram (inline link) and GitHub profile (inline link). */
 @Composable
