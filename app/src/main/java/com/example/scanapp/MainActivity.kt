@@ -93,7 +93,7 @@ fun ScanAppTheme(
     )
 }
 
-private enum class Screen { HOME, DETAIL, SCAN_EXPORT, SETTINGS, COLLAGE }
+private enum class Screen { HOME, DETAIL, SCAN_EXPORT, SETTINGS, COLLAGE, BACKUP }
 
 class MainActivity : ComponentActivity() {
 
@@ -136,6 +136,9 @@ class MainActivity : ComponentActivity() {
 
     private var collagePickerPages by mutableStateOf<List<com.example.scanapp.ui.CollagePickerPage>>(emptyList())
     private var isSavingCollage by mutableStateOf(false)
+
+    private var isBackupActive by mutableStateOf(false)
+    private var backupStatusMessage by mutableStateOf<String?>(null)
 
     private sealed class PendingScan {
         object NewDocument : PendingScan()
@@ -185,6 +188,7 @@ class MainActivity : ComponentActivity() {
                         Screen.SCAN_EXPORT -> if (openDocumentId != null) Screen.DETAIL else Screen.HOME
                         Screen.SETTINGS -> Screen.HOME
                         Screen.COLLAGE -> Screen.HOME
+                        Screen.BACKUP -> Screen.HOME
                         Screen.HOME -> Screen.HOME
                     }
                 }
@@ -210,7 +214,8 @@ class MainActivity : ComponentActivity() {
                         sortDirection = homeSortDirection,
                         onSortChange = { sortBy, direction -> onHomeSortChange(sortBy, direction) },
                         onSettingsClick = { currentScreen = Screen.SETTINGS },
-                        onToolsClick = { openCollageScreen() }
+                        onToolsClick = { openCollageScreen() },
+                        onBackupClick = { currentScreen = Screen.BACKUP }
                     )
                     Screen.DETAIL -> {
                         val documentId = openDocumentId
@@ -283,6 +288,13 @@ class MainActivity : ComponentActivity() {
                         onSaveClick = { layout, pageSize, orientation, pages ->
                             saveCollageAsNewDocument(layout, pageSize, orientation, pages)
                         }
+                    )
+                    Screen.BACKUP -> com.example.scanapp.ui.BackupScreen(
+                        isProcessing = isBackupActive,
+                        statusMessage = backupStatusMessage,
+                        onLocalBackup = { password -> runLocalBackup(password) },
+                        onLocalRestore = { password -> runLocalRestore(password) },
+                        onTelegramSync = { token, chatId, password -> runTelegramSync(token, chatId, password) }
                     )
                 }
 
@@ -682,6 +694,83 @@ class MainActivity : ComponentActivity() {
                 }
                 is com.example.scanapp.update.ApkDownloadResult.Error -> {
                     updateDownloadError = result.message
+                }
+            }
+        }
+    }
+
+    private fun runLocalBackup(password: String) {
+        if (isBackupActive) return
+        isBackupActive = true
+        backupStatusMessage = "Creating backup..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(cacheDir, "scanapp_local.enc")
+                com.example.scanapp.backup.BackupEngine.createBackup(applicationContext, file, password.ifBlank { null })
+                withContext(Dispatchers.Main) {
+                    backupStatusMessage = "Backup saved to ${file.path}"
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    backupStatusMessage = "Backup failed: ${e.message}"
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isBackupActive = false
+                }
+            }
+        }
+    }
+
+    private fun runLocalRestore(password: String) {
+        if (isBackupActive) return
+        isBackupActive = true
+        backupStatusMessage = "Restoring backup..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(cacheDir, "scanapp_local.enc")
+                if (!file.exists()) {
+                    withContext(Dispatchers.Main) {
+                        backupStatusMessage = "Backup file not found"
+                    }
+                } else {
+                    com.example.scanapp.backup.BackupEngine.restoreBackup(applicationContext, file, password.ifBlank { null })
+                    withContext(Dispatchers.Main) {
+                        backupStatusMessage = "Restore complete"
+                    }
+                    observeLibrary()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    backupStatusMessage = "Restore failed: ${e.message}"
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isBackupActive = false
+                }
+            }
+        }
+    }
+
+    private fun runTelegramSync(token: String, chatId: String, password: String) {
+        if (isBackupActive) return
+        isBackupActive = true
+        backupStatusMessage = "Uploading to Telegram..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(cacheDir, "scanapp_tg.enc")
+                com.example.scanapp.backup.BackupEngine.createBackup(applicationContext, file, password.ifBlank { null })
+                com.example.scanapp.backup.BackupEngine.uploadToTelegramAndRotate(applicationContext, token, chatId, file)
+                withContext(Dispatchers.Main) {
+                    backupStatusMessage = "Upload complete"
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    backupStatusMessage = "Upload failed: ${e.message}"
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isBackupActive = false
                 }
             }
         }
