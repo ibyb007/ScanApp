@@ -99,8 +99,10 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var scannerLauncher: DocumentScannerLauncher
     private lateinit var pdfImportLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
+    private lateinit var restoreBackupLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
+    private var pendingRestorePassword: String = ""
     private val exportEngine by lazy { ExportEngine(applicationContext) }
-    private val repository by lazy { DocumentRepository(applicationContext) }
+    private var repository = DocumentRepository(applicationContext)
 
     private var currentScreen by mutableStateOf(Screen.HOME)
     private var scannedPages by mutableStateOf<List<Uri>>(emptyList())
@@ -175,6 +177,16 @@ class MainActivity : ComponentActivity() {
         ) { uri ->
             if (uri != null) {
                 onPdfPicked(uri)
+            }
+        }
+
+        restoreBackupLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) {
+                runLocalRestore(uri, pendingRestorePassword)
+            } else {
+                isBackupActive = false
             }
         }
 
@@ -705,10 +717,11 @@ class MainActivity : ComponentActivity() {
         backupStatusMessage = "Creating backup..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val file = File(cacheDir, "scanapp_local.enc")
-                com.example.scanapp.backup.BackupEngine.createBackup(applicationContext, file, password.ifBlank { null })
+                val location = com.example.scanapp.backup.BackupEngine.createLocalBackupInDownloads(
+                    applicationContext, password.ifBlank { null }
+                )
                 withContext(Dispatchers.Main) {
-                    backupStatusMessage = "Backup saved to ${file.path}"
+                    backupStatusMessage = "Backup saved to $location"
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -722,24 +735,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Entry point from the Backup screen's Restore button: opens a file picker scoped to Downloads/ScanApp. */
     private fun runLocalRestore(password: String) {
         if (isBackupActive) return
         isBackupActive = true
+        pendingRestorePassword = password
+        backupStatusMessage = "Choose a backup file to restore..."
+        restoreBackupLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+    }
+
+    /** Actual restore once the user has picked a backup file via SAF. */
+    private fun runLocalRestore(backupUri: Uri, password: String) {
         backupStatusMessage = "Restoring backup..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val file = File(cacheDir, "scanapp_local.enc")
-                if (!file.exists()) {
-                    withContext(Dispatchers.Main) {
-                        backupStatusMessage = "Backup file not found"
-                    }
-                } else {
-                    com.example.scanapp.backup.BackupEngine.restoreBackup(applicationContext, file, password.ifBlank { null })
-                    withContext(Dispatchers.Main) {
-                        backupStatusMessage = "Restore complete"
-                    }
-                    observeLibrary()
+                com.example.scanapp.backup.BackupEngine.restoreBackup(
+                    applicationContext, backupUri, password.ifBlank { null }
+                )
+                // The restore just overwrote scanapp.db on disk. The old
+                // repository/DAO/Room connection still points at the now-stale
+                // file, so it must be rebuilt before the UI re-observes the
+                // library — otherwise inserts (restored rows or new scans)
+                // collide with Room's old in-memory autoincrement state and
+                // end up merged into a single document group.
+                repository = DocumentRepository(applicationContext)
+                withContext(Dispatchers.Main) {
+                    backupStatusMessage = "Restore complete"
+                    openDocumentId = null
+                    currentScreen = Screen.HOME
                 }
+                observeLibrary()
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     backupStatusMessage = "Restore failed: ${e.message}"
