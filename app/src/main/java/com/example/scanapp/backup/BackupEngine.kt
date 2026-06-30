@@ -34,6 +34,10 @@ object BackupEngine {
     private const val KEY_LAST_FILE_ID = "last_file_id"
     private const val KEY_BOT_TOKEN = "telegram_bot_token"
     private const val KEY_CHAT_ID = "telegram_chat_id"
+    // Telegram's Bot API rejects uploads over 50MB (HTTP 413). Split larger
+    // backups into parts comfortably under that limit and re-stitch them on
+    // restore, rather than failing outright on bigger libraries.
+    private const val TELEGRAM_CHUNK_SIZE = 45L * 1024 * 1024
 
     /** Persists the Telegram credentials so they survive app restarts. */
     fun saveTelegramCredentials(context: Context, token: String, chatId: String) {
@@ -363,12 +367,98 @@ object BackupEngine {
     }
 
     /**
-     * Uploads the file to the channel, extracts the new message ID, and deletes the older backup message if it exists.
+     * Splits a file into parts no larger than [chunkSize]. If the file
+     * already fits within one chunk, returns a single-element list
+     * containing the original file unchanged (no copy made).
+     */
+    private fun splitIntoChunks(context: Context, file: File, chunkSize: Long): List<File> {
+        if (file.length() <= chunkSize) return listOf(file)
+
+        val chunks = mutableListOf<File>()
+        file.inputStream().buffered().use { input ->
+            var remaining = file.length()
+            var partIndex = 0
+            val buffer = ByteArray(1 shl 20) // 1MB
+            while (remaining > 0) {
+                partIndex++
+                val thisChunkSize = minOf(chunkSize, remaining)
+                val chunkFile = File(context.cacheDir, "${file.name}.part$partIndex")
+                var written = 0L
+                chunkFile.outputStream().use { out ->
+                    while (written < thisChunkSize) {
+                        val toRead = minOf(buffer.size.toLong(), thisChunkSize - written).toInt()
+                        val read = input.read(buffer, 0, toRead)
+                        if (read == -1) break
+                        out.write(buffer, 0, read)
+                        written += read
+                    }
+                }
+                chunks.add(chunkFile)
+                remaining -= written
+            }
+        }
+        return chunks
+    }
+
+    /**
+     * Uploads the file to the channel, extracts the new message ID(s), and
+     * deletes the older backup message(s) if any exist. Files over Telegram's
+     * ~50MB bot upload limit are transparently split into parts and uploaded
+     * as separate messages; restore re-stitches them in order.
      */
     fun uploadToTelegramAndRotate(context: Context, token: String, chatId: String, file: File) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val lastMsgId = prefs.getString(KEY_LAST_MSG_ID, null)
+        val previousMsgIds = prefs.getString(KEY_LAST_MSG_ID, null)
+            ?.split(",")
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
 
+        val chunks = splitIntoChunks(context, file, TELEGRAM_CHUNK_SIZE)
+        val newMsgIds = mutableListOf<String>()
+        val newFileIds = mutableListOf<String>()
+
+        try {
+            chunks.forEachIndexed { index, chunkFile ->
+                val partSuffix = if (chunks.size > 1) ".part${index + 1}of${chunks.size}" else ""
+                val (msgId, fileId) = uploadSingleDocument(token, chatId, chunkFile, "${file.name}$partSuffix")
+                newMsgIds.add(msgId)
+                if (fileId != null) newFileIds.add(fileId)
+            }
+        } catch (e: Exception) {
+            // A multi-part upload that fails partway through would otherwise
+            // leave orphaned parts on Telegram with nothing locally pointing
+            // at them. Clean up whatever did make it through this attempt
+            // before surfacing the error.
+            newMsgIds.forEach { id ->
+                try { deleteTelegramMessage(token, chatId, id) } catch (_: Exception) { }
+            }
+            throw e
+        } finally {
+            if (chunks.size > 1) chunks.forEach { it.delete() }
+        }
+
+        if (newFileIds.size != chunks.size) {
+            throw IOException("Telegram upload succeeded but did not return file IDs for all parts")
+        }
+
+        prefs.edit()
+            .putString(KEY_LAST_MSG_ID, newMsgIds.joinToString(","))
+            .putString(KEY_LAST_FILE_ID, newFileIds.joinToString(","))
+            .apply()
+
+        // Delete the previous backup's message(s) now that the new one is fully uploaded.
+        previousMsgIds.forEach { id ->
+            try {
+                deleteTelegramMessage(token, chatId, id)
+            } catch (e: Exception) {
+                // Log failure but don't break current deployment updates
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /** Uploads a single document via sendDocument and returns (message_id, file_id). */
+    private fun uploadSingleDocument(token: String, chatId: String, file: File, filename: String): Pair<String, String?> {
         val boundary = "===ScanAppBoundary==="
         val LINE_FEED = "\r\n"
         val url = URL("https://api.telegram.org/bot$token/sendDocument")
@@ -387,7 +477,7 @@ object BackupEngine {
                 writer.append(LINE_FEED).append(chatId).append(LINE_FEED)
 
                 writer.append("--$boundary").append(LINE_FEED)
-                writer.append("Content-Disposition: form-data; name=\"document\"; filename=\"${file.name}\"").append(LINE_FEED)
+                writer.append("Content-Disposition: form-data; name=\"document\"; filename=\"$filename\"").append(LINE_FEED)
                 writer.append("Content-Type: application/octet-stream").append(LINE_FEED)
                 writer.append(LINE_FEED).flush()
 
@@ -400,71 +490,84 @@ object BackupEngine {
         }
 
         val status = connection.responseCode
-        if (status == HttpURLConnection.HTTP_OK) {
-            val response = connection.inputStream.bufferedReader().use { it.readText() }
-            
-            // Basic manual JSON parsing of message_id to avoid heavy library overheads
-            val msgIdMarker = "\"message_id\":"
-            if (response.contains(msgIdMarker)) {
-                val start = response.indexOf(msgIdMarker) + msgIdMarker.length
-                var end = start
-                while (end < response.length && (response[end].isDigit() || response[end] == ' ')) {
-                    end++
-                }
-                val newMsgId = response.substring(start, end).trim()
-
-                // Also capture the document's file_id so a later restore can
-                // ask Telegram for a fresh download link via getFile.
-                // NOTE: Telegram's JSON does not guarantee "file_id" is the
-                // first key inside "document":{...} (it's typically preceded
-                // by "file_name" and "mime_type"), so we locate the
-                // "document" object first and then search for "file_id"
-                // anywhere within it rather than assuming a fixed key order.
-                var newFileId: String? = null
-                val documentMarker = "\"document\":{"
-                val docStart = response.indexOf(documentMarker)
-                if (docStart != -1) {
-                    val fileIdKey = "\"file_id\":\""
-                    val fStart = response.indexOf(fileIdKey, docStart)
-                    if (fStart != -1) {
-                        val valueStart = fStart + fileIdKey.length
-                        val fEnd = response.indexOf('"', valueStart)
-                        if (fEnd > valueStart) newFileId = response.substring(valueStart, fEnd)
-                    }
-                }
-
-                // Store the new message/file identifiers
-                prefs.edit()
-                    .putString(KEY_LAST_MSG_ID, newMsgId)
-                    .apply { if (newFileId != null) putString(KEY_LAST_FILE_ID, newFileId) }
-                    .apply()
-
-                // Delete the old backup if it exists to maintain standard rotation limits
-                if (!lastMsgId.isNullOrBlank()) {
-                    try {
-                        deleteTelegramMessage(token, chatId, lastMsgId)
-                    } catch (e: Exception) {
-                        // Log failure but don't break current deployment updates
-                        e.printStackTrace()
-                    }
-                }
-            }
-        } else {
+        if (status != HttpURLConnection.HTTP_OK) {
             val error = connection.errorStream?.bufferedReader()?.use { it.readText() }
+            if (status == 413) {
+                throw IOException(
+                    "Telegram rejected this part as too large (HTTP 413). " +
+                        "Bots are limited to ~50MB per file even when split into parts smaller than that — " +
+                        "this usually means the chunk itself is still oversized; try a smaller chunk size."
+                )
+            }
             throw IOException("Telegram Server Error (HTTP $status): $error")
         }
+
+        val response = connection.inputStream.bufferedReader().use { it.readText() }
+
+        // Basic manual JSON parsing of message_id to avoid heavy library overheads
+        val msgIdMarker = "\"message_id\":"
+        if (!response.contains(msgIdMarker)) {
+            throw IOException("Telegram response did not include a message_id")
+        }
+        val start = response.indexOf(msgIdMarker) + msgIdMarker.length
+        var end = start
+        while (end < response.length && (response[end].isDigit() || response[end] == ' ')) {
+            end++
+        }
+        val msgId = response.substring(start, end).trim()
+
+        // Also capture the document's file_id so a later restore can
+        // ask Telegram for a fresh download link via getFile.
+        // NOTE: Telegram's JSON does not guarantee "file_id" is the
+        // first key inside "document":{...} (it's typically preceded
+        // by "file_name" and "mime_type"), so we locate the
+        // "document" object first and then search for "file_id"
+        // anywhere within it rather than assuming a fixed key order.
+        var fileId: String? = null
+        val documentMarker = "\"document\":{"
+        val docStart = response.indexOf(documentMarker)
+        if (docStart != -1) {
+            val fileIdKey = "\"file_id\":\""
+            val fStart = response.indexOf(fileIdKey, docStart)
+            if (fStart != -1) {
+                val valueStart = fStart + fileIdKey.length
+                val fEnd = response.indexOf('"', valueStart)
+                if (fEnd > valueStart) fileId = response.substring(valueStart, fEnd)
+            }
+        }
+
+        return Pair(msgId, fileId)
     }
 
     /**
-     * Downloads the most recently uploaded backup file from Telegram (using the
-     * file_id captured during the last successful upload) and restores it in place.
+     * Downloads the most recently uploaded backup from Telegram (using the
+     * file_id(s) captured during the last successful upload) and restores it
+     * in place. If the backup was split into multiple parts at upload time,
+     * each part is downloaded and concatenated in order before restoring.
      */
     fun downloadFromTelegramAndRestore(context: Context, token: String, password: String?) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val fileId = prefs.getString(KEY_LAST_FILE_ID, null)
-            ?: throw IOException("No Telegram backup found to restore. Run an upload first.")
+        val fileIds = prefs.getString(KEY_LAST_FILE_ID, null)
+            ?.split(",")
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        if (fileIds.isEmpty()) {
+            throw IOException("No Telegram backup found to restore. Run an upload first.")
+        }
 
-        // Step 1: ask Telegram for the file's download path
+        val tempFile = File(context.cacheDir, "scanapp_tg_restore.enc")
+        try {
+            FileOutputStream(tempFile).use { output ->
+                fileIds.forEach { fileId -> downloadTelegramFile(token, fileId, output) }
+            }
+            restoreBackup(context, tempFile, password)
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    /** Resolves a file_id to a download path via getFile, then streams its bytes into [output]. */
+    private fun downloadTelegramFile(token: String, fileId: String, output: FileOutputStream) {
         val getFileUrl = URL("https://api.telegram.org/bot$token/getFile?file_id=$fileId")
         val getFileConnection = (getFileUrl.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -487,7 +590,6 @@ object BackupEngine {
         val pEnd = getFileResponse.indexOf('"', pStart)
         val filePath = getFileResponse.substring(pStart, pEnd)
 
-        // Step 2: download the actual file bytes
         val downloadUrl = URL("https://api.telegram.org/file/bot$token/$filePath")
         val downloadConnection = (downloadUrl.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -501,16 +603,7 @@ object BackupEngine {
             throw IOException("Telegram Server Error (HTTP $downloadStatus): $error")
         }
 
-        val tempFile = File(context.cacheDir, "scanapp_tg_restore.enc")
-        downloadConnection.inputStream.use { input ->
-            FileOutputStream(tempFile).use { output -> input.copyTo(output) }
-        }
-
-        try {
-            restoreBackup(context, tempFile, password)
-        } finally {
-            tempFile.delete()
-        }
+        downloadConnection.inputStream.use { input -> input.copyTo(output) }
     }
 
     private fun deleteTelegramMessage(token: String, chatId: String, messageId: String) {
