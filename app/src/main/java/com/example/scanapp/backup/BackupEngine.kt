@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.sqlite.db.SimpleSQLiteQuery
 import com.example.scanapp.data.ScanAppDatabase
 import java.io.*
 import java.net.HttpURLConnection
@@ -44,6 +45,20 @@ object BackupEngine {
     private fun buildBackupArchive(context: Context, password: String?): File {
         val tempZip = File(context.cacheDir, "backup_tmp_${System.currentTimeMillis()}.zip")
         if (tempZip.exists()) tempZip.delete()
+
+        // Room runs in WAL journal mode, so recently committed rows can still
+        // live only in the "-wal" side file rather than in scanapp.db itself
+        // until SQLite auto-checkpoints. Since we read scanapp.db directly off
+        // disk below (not through Room), force a full checkpoint first —
+        // otherwise a backup taken shortly after adding/editing documents can
+        // zip up a stale/near-empty main db file even though the app "has"
+        // the data, silently dropping it from the backup.
+        try {
+            val db = ScanAppDatabase.getInstance(context)
+            db.openHelper.writableDatabase.query(SimpleSQLiteQuery("PRAGMA wal_checkpoint(FULL)")).use { it.moveToFirst() }
+        } catch (_: Exception) {
+            // Best-effort: if this fails we still proceed with whatever is on disk.
+        }
 
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zos ->
             val dbFile = context.getDatabasePath("scanapp.db")
