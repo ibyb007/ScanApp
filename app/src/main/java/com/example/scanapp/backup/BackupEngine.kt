@@ -111,6 +111,67 @@ object BackupEngine {
         return encrypted
     }
 
+    /**
+     * Encrypts the bot token + chat ID into a small standalone file and saves
+     * it to Downloads/ScanApp, so credentials can be backed up/moved to
+     * another device independently of a full data backup. A non-blank
+     * passphrase is required since this file contains sensitive credentials.
+     */
+    fun exportTelegramCredentialsToDownloads(context: Context, token: String, chatId: String, password: String): String {
+        require(password.isNotBlank()) { "Enter a passphrase to encrypt the exported credentials" }
+        require(token.isNotBlank() && chatId.isNotBlank()) { "Nothing to export — bot token and chat ID are both empty" }
+
+        val tempPlain = File(context.cacheDir, "tg_creds_plain_${System.currentTimeMillis()}.txt")
+        val tempEnc = File(context.cacheDir, "tg_creds_enc_${System.currentTimeMillis()}.enc")
+        try {
+            tempPlain.writeText("$token\n$chatId")
+            encryptFile(tempPlain, tempEnc, password)
+
+            val displayName = "scanapp_telegram_creds_${System.currentTimeMillis()}.enc"
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveViaMediaStore(context, tempEnc, displayName)
+            } else {
+                saveViaLegacyDirectFile(tempEnc, displayName)
+            }
+        } finally {
+            tempPlain.delete()
+            tempEnc.delete()
+        }
+    }
+
+    /**
+     * Decrypts a credentials file previously written by
+     * [exportTelegramCredentialsToDownloads] and returns the (token, chatId)
+     * pair. Does not save them; the caller decides whether/when to persist
+     * via [saveTelegramCredentials].
+     */
+    fun importTelegramCredentialsFromUri(context: Context, sourceUri: Uri, password: String): Pair<String, String> {
+        require(password.isNotBlank()) { "Enter the passphrase used to export these credentials" }
+
+        val rawCopy = File(context.cacheDir, "tg_creds_import_${System.currentTimeMillis()}.enc")
+        val decrypted = File(context.cacheDir, "tg_creds_import_${System.currentTimeMillis()}.txt")
+        try {
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                rawCopy.outputStream().use { input.copyTo(it) }
+            } ?: throw IOException("Could not open the selected file")
+
+            try {
+                decryptFile(rawCopy, decrypted, password)
+            } catch (e: Exception) {
+                throw IOException("Could not decrypt — wrong passphrase, or not a credentials export file")
+            }
+
+            val parts = decrypted.readText().split("\n", limit = 2)
+            if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) {
+                throw IOException("File doesn't look like a valid credentials export")
+            }
+            return Pair(parts[0].trim(), parts[1].trim())
+        } finally {
+            rawCopy.delete()
+            decrypted.delete()
+        }
+    }
+
     /** Used by the Telegram sync path, which needs a private file to upload from. */
     fun createBackup(context: Context, outputFile: File, password: String?) {
         val archive = buildBackupArchive(context, password)
