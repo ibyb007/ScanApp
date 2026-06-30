@@ -1,6 +1,12 @@
 package com.example.scanapp.backup
 
+import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import com.example.scanapp.data.ScanAppDatabase
 import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
@@ -25,8 +31,18 @@ object BackupEngine {
     private const val PREFS_NAME = "backup_rotation_prefs"
     private const val KEY_LAST_MSG_ID = "last_msg_id"
 
-    fun createBackup(context: Context, outputFile: File, password: String?) {
-        val tempZip = File(context.cacheDir, "backup_tmp.zip")
+    /** Public subfolder name under Downloads where local backups are saved/visible. */
+    private const val BACKUP_SUBDIR = "ScanApp"
+
+    /**
+     * Builds an encrypted (or plain, if password is null/blank) backup archive
+     * in [context.cacheDir] and returns the scratch file. Callers that want a
+     * private scratch copy (e.g. before uploading to Telegram) can use this
+     * directly; [createLocalBackupInDownloads] wraps this and publishes the
+     * result to the public Downloads/ScanApp folder.
+     */
+    private fun buildBackupArchive(context: Context, password: String?): File {
+        val tempZip = File(context.cacheDir, "backup_tmp_${System.currentTimeMillis()}.zip")
         if (tempZip.exists()) tempZip.delete()
 
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zos ->
@@ -49,43 +65,144 @@ object BackupEngine {
             }
         }
 
-        if (!password.isNullOrEmpty()) {
-            encryptFile(tempZip, outputFile, password)
-            tempZip.delete()
-        } else {
-            tempZip.renameTo(outputFile)
+        if (password.isNullOrEmpty()) {
+            return tempZip
+        }
+
+        val encrypted = File(context.cacheDir, "backup_enc_${System.currentTimeMillis()}.enc")
+        encryptFile(tempZip, encrypted, password)
+        tempZip.delete()
+        return encrypted
+    }
+
+    /** Used by the Telegram sync path, which needs a private file to upload from. */
+    fun createBackup(context: Context, outputFile: File, password: String?) {
+        val archive = buildBackupArchive(context, password)
+        archive.copyTo(outputFile, overwrite = true)
+        archive.delete()
+    }
+
+    /**
+     * Creates a backup and saves it to the public Downloads/ScanApp folder, so
+     * it survives app data clear / uninstall / factory reset — unlike the
+     * app-private cache or files directories, which are wiped along with the
+     * app. Returns a human-readable description of where it landed.
+     */
+    fun createLocalBackupInDownloads(context: Context, password: String?): String {
+        val archive = buildBackupArchive(context, password)
+        val displayName = "scanapp_backup_${System.currentTimeMillis()}.enc"
+        val location = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveViaMediaStore(context, archive, displayName)
+            } else {
+                saveViaLegacyDirectFile(archive, displayName)
+            }
+        } finally {
+            archive.delete()
+        }
+        return location
+    }
+
+    private fun saveViaMediaStore(context: Context, sourceFile: File, displayName: String): String {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + BACKUP_SUBDIR)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+
+        val collection = MediaStore.Files.getContentUri("external")
+        val uri = resolver.insert(collection, values)
+            ?: throw IllegalStateException("MediaStore insert failed for $displayName")
+
+        resolver.openOutputStream(uri)?.use { out ->
+            sourceFile.inputStream().use { it.copyTo(out) }
+        } ?: throw IllegalStateException("Could not open output stream for $displayName")
+
+        values.clear()
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+
+        return "Download/$BACKUP_SUBDIR/$displayName"
+    }
+
+    private fun saveViaLegacyDirectFile(sourceFile: File, displayName: String): String {
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val targetDir = File(downloadsDir, BACKUP_SUBDIR).apply { mkdirs() }
+        val outFile = File(targetDir, displayName)
+        sourceFile.copyTo(outFile, overwrite = true)
+        return outFile.absolutePath
+    }
+
+    /** Restore from an internal/private File (used by the Telegram round-trip path). */
+    fun restoreBackup(context: Context, backupFile: File, password: String?) {
+        FileInputStream(backupFile).use { input ->
+            restoreBackup(context, input, password)
         }
     }
 
-    fun restoreBackup(context: Context, backupFile: File, password: String?) {
-        val tempZip = File(context.cacheDir, "restore_tmp.zip")
-        if (tempZip.exists()) tempZip.delete()
-
-        if (!password.isNullOrEmpty()) {
-            decryptFile(backupFile, tempZip, password)
-        } else {
-            backupFile.copyTo(tempZip, overwrite = true)
+    /**
+     * Restore from any readable Uri — in particular a SAF document picked by
+     * the user from Downloads/ScanApp via ACTION_OPEN_DOCUMENT, since a plain
+     * File path can't reliably reach MediaStore-written public files across
+     * all OEMs/API levels.
+     */
+    fun restoreBackup(context: Context, sourceUri: Uri, password: String?) {
+        val stream = context.contentResolver.openInputStream(sourceUri)
+            ?: throw IOException("Could not open backup file")
+        stream.use { input ->
+            restoreBackup(context, input, password)
         }
+    }
 
-        File(context.filesDir, "scans").deleteRecursively()
+    private fun restoreBackup(context: Context, input: InputStream, password: String?) {
+        val rawCopy = File(context.cacheDir, "restore_raw_${System.currentTimeMillis()}")
+        rawCopy.outputStream().use { out -> input.copyTo(out) }
 
-        ZipInputStream(BufferedInputStream(FileInputStream(tempZip))).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                val destFile = File(context.filesDir, entry.name)
-                if (entry.name == "scanapp.db") {
-                    val dbTarget = context.getDatabasePath("scanapp.db")
-                    dbTarget.parentFile?.mkdirs()
-                    dbTarget.outputStream().use { zis.copyTo(it) }
-                } else {
-                    destFile.parentFile?.mkdirs()
-                    destFile.outputStream().use { zis.copyTo(it) }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
+        val tempZip = File(context.cacheDir, "restore_tmp_${System.currentTimeMillis()}.zip")
+        try {
+            if (!password.isNullOrEmpty()) {
+                decryptFile(rawCopy, tempZip, password)
+            } else {
+                rawCopy.copyTo(tempZip, overwrite = true)
             }
+
+            // Close the live Room connection before touching scanapp.db on disk.
+            // Otherwise Room keeps its old connection/autoincrement bookkeeping
+            // against the file we're about to overwrite, and rowids in the
+            // restored data can collide with whatever Room still thinks is
+            // "next" — which is what merged distinct restored documents (and
+            // later, newly-saved scans) into a single document group.
+            ScanAppDatabase.closeAndReset()
+
+            File(context.filesDir, "scans").deleteRecursively()
+
+            ZipInputStream(BufferedInputStream(FileInputStream(tempZip))).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (entry.name == "scanapp.db") {
+                        val dbTarget = context.getDatabasePath("scanapp.db")
+                        dbTarget.parentFile?.mkdirs()
+                        // Also clear Room's WAL/SHM side files if present, so a
+                        // stale write-ahead log from the old database can't get
+                        // replayed against the freshly restored file.
+                        File(dbTarget.path + "-wal").delete()
+                        File(dbTarget.path + "-shm").delete()
+                        dbTarget.outputStream().use { zis.copyTo(it) }
+                    } else {
+                        val destFile = File(context.filesDir, entry.name)
+                        destFile.parentFile?.mkdirs()
+                        destFile.outputStream().use { zis.copyTo(it) }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+        } finally {
+            rawCopy.delete()
+            tempZip.delete()
         }
-        tempZip.delete()
     }
 
     private fun encryptFile(inputFile: File, outputFile: File, password: CharSequence) {
