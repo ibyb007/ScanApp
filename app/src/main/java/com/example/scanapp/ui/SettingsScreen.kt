@@ -20,7 +20,9 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.graphicsLayer
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalUriHandler
@@ -378,13 +380,9 @@ private fun DeveloperCreditLine() {
             modifier = Modifier
                 .align(androidx.compose.ui.Alignment.CenterStart)
                 .offset(x = mascotOffset.value.dp)
-                .graphicsLayer {
-                    rotationZ = mascotRotation.value
-                    scaleX = 2f - mascotSquash.value
-                    scaleY = mascotSquash.value
-                    alpha = mascotAlpha.value
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
-                }
+                .rotate(mascotRotation.value)
+                .scale(scaleX = 2f - mascotSquash.value, scaleY = mascotSquash.value)
+                .alpha(mascotAlpha.value)
         )
     }
 }
