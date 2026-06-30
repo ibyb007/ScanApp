@@ -143,6 +143,7 @@ class MainActivity : ComponentActivity() {
 
     private var isBackupActive by mutableStateOf(false)
     private var backupStatusMessage by mutableStateOf<String?>(null)
+    private var telegramActivity by mutableStateOf(com.example.scanapp.ui.TelegramActivityState.NONE)
 
     private sealed class PendingScan {
         object NewDocument : PendingScan()
@@ -334,6 +335,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onExportTelegramCredentials = { password -> runExportTelegramCredentials(password) },
                         onImportTelegramCredentials = { password -> runImportTelegramCredentials(password) },
+                        telegramActivity = telegramActivity,
                         onHomeClick = { currentScreen = Screen.HOME },
                         onToolsClick = { openCollageScreen() },
                         onSettingsClick = { currentScreen = Screen.SETTINGS }
@@ -811,6 +813,7 @@ class MainActivity : ComponentActivity() {
     private fun runTelegramSync(token: String, chatId: String, password: String) {
         if (isBackupActive) return
         isBackupActive = true
+        telegramActivity = com.example.scanapp.ui.TelegramActivityState.UPLOADING
         backupStatusMessage = "Uploading to Telegram..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -827,6 +830,7 @@ class MainActivity : ComponentActivity() {
             } finally {
                 withContext(Dispatchers.Main) {
                     isBackupActive = false
+                    telegramActivity = com.example.scanapp.ui.TelegramActivityState.NONE
                 }
             }
         }
@@ -835,6 +839,7 @@ class MainActivity : ComponentActivity() {
     private fun runTelegramRestore(token: String, password: String) {
         if (isBackupActive) return
         isBackupActive = true
+        telegramActivity = com.example.scanapp.ui.TelegramActivityState.DOWNLOADING
         backupStatusMessage = "Downloading backup from Telegram..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -857,6 +862,7 @@ class MainActivity : ComponentActivity() {
             } finally {
                 withContext(Dispatchers.Main) {
                     isBackupActive = false
+                    telegramActivity = com.example.scanapp.ui.TelegramActivityState.NONE
                 }
             }
         }
