@@ -34,10 +34,11 @@ object BackupEngine {
     private const val KEY_LAST_FILE_ID = "last_file_id"
     private const val KEY_BOT_TOKEN = "telegram_bot_token"
     private const val KEY_CHAT_ID = "telegram_chat_id"
-    // Telegram's Bot API rejects uploads over 50MB (HTTP 413). Split larger
-    // backups into parts comfortably under that limit and re-stitch them on
-    // restore, rather than failing outright on bigger libraries.
-    private const val TELEGRAM_CHUNK_SIZE = 45L * 1024 * 1024
+    // Telegram's Bot API has two different size limits: uploads (sendDocument)
+    // are capped around 50MB, but downloads via getFile are capped at 20MB —
+    // a chunk has to survive *both* directions since it gets uploaded now and
+    // downloaded later on restore, so size against the lower (download) limit.
+    private const val TELEGRAM_CHUNK_SIZE = 19L * 1024 * 1024
 
     /** Persists the Telegram credentials so they survive app restarts. */
     fun saveTelegramCredentials(context: Context, token: String, chatId: String) {
@@ -578,6 +579,13 @@ object BackupEngine {
         val getFileStatus = getFileConnection.responseCode
         if (getFileStatus != HttpURLConnection.HTTP_OK) {
             val error = getFileConnection.errorStream?.bufferedReader()?.use { it.readText() }
+            if (error?.contains("file is too big", ignoreCase = true) == true) {
+                throw IOException(
+                    "Telegram can't download this backup part — it's over the Bot API's 20MB download limit. " +
+                        "This usually means it was uploaded before chunk sizing was fixed for the download limit; " +
+                        "run a fresh upload (\"Run backup to Telegram\") so it gets re-split into smaller parts."
+                )
+            }
             throw IOException("Telegram Server Error (HTTP $getFileStatus): $error")
         }
 
