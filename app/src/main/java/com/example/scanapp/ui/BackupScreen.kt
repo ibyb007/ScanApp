@@ -2,11 +2,18 @@ package com.example.scanapp.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Link
@@ -18,11 +25,55 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+
+/** Which Telegram network operation, if any, is currently in flight — drives the sync animation. */
+enum class TelegramActivityState { NONE, UPLOADING, DOWNLOADING }
+
+/**
+ * Small bouncing/pulsing cloud icon used to indicate live Telegram upload or
+ * download activity, in place of a generic spinner.
+ */
+@Composable
+private fun TelegramActivityIcon(
+    activity: TelegramActivityState,
+    tint: Color,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "telegramActivity")
+    val bounce by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = if (activity == TelegramActivityState.UPLOADING) -5f else 5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 550, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "bounce"
+    )
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 550, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+    Icon(
+        imageVector = if (activity == TelegramActivityState.UPLOADING) Icons.Filled.CloudUpload else Icons.Filled.CloudDownload,
+        contentDescription = if (activity == TelegramActivityState.UPLOADING) "Uploading to Telegram" else "Downloading from Telegram",
+        tint = tint.copy(alpha = alpha),
+        modifier = modifier
+            .size(20.dp)
+            .graphicsLayer { translationY = bounce }
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +89,7 @@ fun BackupScreen(
     onSaveTelegramCredentials: (token: String, chat: String) -> Unit = { _, _ -> },
     onExportTelegramCredentials: (password: String) -> Unit = {},
     onImportTelegramCredentials: (password: String) -> Unit = {},
+    telegramActivity: TelegramActivityState = TelegramActivityState.NONE,
     onHomeClick: () -> Unit = {},
     onToolsClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {}
@@ -155,7 +207,11 @@ fun BackupScreen(
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    if (telegramActivity != TelegramActivityState.NONE) {
+                        TelegramActivityIcon(activity = telegramActivity, tint = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Icon(Icons.Filled.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    }
                     Spacer(Modifier.width(8.dp))
                     Text("Telegram Bot Endpoint Sync", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
@@ -251,7 +307,11 @@ fun BackupScreen(
                     enabled = !isProcessing && botToken.isNotBlank() && chatId.isNotBlank() && !credentialsEditing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    if (isProcessing) {
+                    if (telegramActivity == TelegramActivityState.UPLOADING) {
+                        TelegramActivityIcon(activity = telegramActivity, tint = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Uploading to Telegram…")
+                    } else if (isProcessing) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary)
                     } else {
                         Text("Run backup to Telegram")
@@ -262,7 +322,13 @@ fun BackupScreen(
                     enabled = !isProcessing && botToken.isNotBlank() && !credentialsEditing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Restore from Telegram")
+                    if (telegramActivity == TelegramActivityState.DOWNLOADING) {
+                        TelegramActivityIcon(activity = telegramActivity, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Downloading from Telegram…")
+                    } else {
+                        Text("Restore from Telegram")
+                    }
                 }
             }
         }
