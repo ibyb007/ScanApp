@@ -1,11 +1,7 @@
 name: Build APK
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:   # lets you trigger a build manually from the Actions tab
+  workflow_dispatch:   # the only way to trigger a build — no push/PR auto-runs
 
 permissions:
   contents: write   # required so the release step can create tags/releases
@@ -17,6 +13,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags, needed to diff against the previous release for the changelog
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -45,7 +43,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      # --- GitHub Release publishing (only on actual pushes to main, not PRs) ---
+      # --- GitHub Release publishing ---
       # Builds the RELEASE variant, now signed with a real, permanent release
       # key instead of AGP's debug keystore (see the signingConfigs comment in
       # app/build.gradle.kts for why that was silently breaking installs over
@@ -57,11 +55,9 @@ jobs:
       # back to a real .jks file here, used only for this run, then discarded
       # along with the rest of the throwaway VM.
       - name: Decode release keystore
-        if: github.event_name == 'push'
         run: printf '%s' "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
 
       - name: Build release APK
-        if: github.event_name == 'push'
         run: >
           gradle assembleRelease --no-daemon
           -PbuildNumber=${{ github.run_number }}
@@ -75,7 +71,6 @@ jobs:
         run: rm -f release.keystore
 
       - name: Generate release tag
-        if: github.event_name == 'push'
         id: tag
         # Tagged as v1.0.<run_number> to match the APK's own versionName
         # exactly (see app/build.gradle.kts). UpdateChecker compares this tag
@@ -84,11 +79,32 @@ jobs:
         # the in-app update check could never detect a newer release.
         run: echo "tag=v1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
+      - name: Generate changelog
+        id: changelog
+        # Real commit messages since the previous tag, instead of relying
+        # purely on GitHub's auto-generated notes (which just produce a bare
+        # "Full Changelog: vX...vY" compare link when commits aren't behind
+        # PRs). Falls back to the full log if this is the first release ever.
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="$PREV_TAG..HEAD"
+          fi
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo "## What's changed"
+            git log "$RANGE" --no-merges --pretty=format:"- %s (%h)"
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
-        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: "ScanApp build #${{ github.run_number }}"
+          name: "ScanApp ${{ steps.tag.outputs.tag }}"
+          body: ${{ steps.changelog.outputs.changelog }}
           generate_release_notes: true
           files: app/build/outputs/apk/release/app-release.apk
