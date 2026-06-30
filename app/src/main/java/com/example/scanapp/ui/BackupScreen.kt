@@ -36,6 +36,8 @@ fun BackupScreen(
     onTelegramSync: (token: String, chat: String, pass: String) -> Unit,
     onTelegramRestore: (token: String, pass: String) -> Unit,
     onSaveTelegramCredentials: (token: String, chat: String) -> Unit = { _, _ -> },
+    onExportTelegramCredentials: (password: String) -> Unit = {},
+    onImportTelegramCredentials: (password: String) -> Unit = {},
     onHomeClick: () -> Unit = {},
     onToolsClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {}
@@ -49,6 +51,19 @@ fun BackupScreen(
     var credentialsEditing by remember { mutableStateOf(savedBotToken.isBlank() && savedChatId.isBlank()) }
     val scrollState = rememberScrollState()
     val context = LocalContext.current
+
+    // savedBotToken/savedChatId can change from outside this composable (e.g.
+    // a credentials import completes elsewhere and the Activity re-reads
+    // persisted prefs) — keep local fields and the editing/saved view in sync
+    // whenever that happens, rather than only seeding them once on first
+    // composition.
+    LaunchedEffect(savedBotToken, savedChatId) {
+        if (savedBotToken.isNotBlank() || savedChatId.isNotBlank()) {
+            botToken = savedBotToken
+            chatId = savedChatId
+            credentialsEditing = false
+        }
+    }
 
     Scaffold(
         bottomBar = {
@@ -145,23 +160,23 @@ fun BackupScreen(
                     Text("Telegram Bot Endpoint Sync", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
 
-                Button(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/BotFather"))
-                        context.startActivity(intent)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Filled.Link, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("1. Create Bot via @BotFather")
-                }
-
                 if (credentialsEditing) {
+                    Button(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/BotFather"))
+                            context.startActivity(intent)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Link, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("1. Create Bot via @BotFather")
+                    }
+
                     OutlinedTextField(
                         value = botToken,
                         onValueChange = { botToken = it },
@@ -187,6 +202,20 @@ fun BackupScreen(
                     ) {
                         Text("Save credentials")
                     }
+                    OutlinedButton(
+                        onClick = { onImportTelegramCredentials(password) },
+                        enabled = !isProcessing && password.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Import credentials from file")
+                    }
+                    if (password.isBlank()) {
+                        Text(
+                            "Enter the Archive Cipher passphrase above to import an encrypted credentials file.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 } else {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -195,11 +224,25 @@ fun BackupScreen(
                     ) {
                         Column {
                             Text("Bot token saved", style = MaterialTheme.typography.bodyMedium)
-                            Text("Chat ID: $chatId", style = MaterialTheme.typography.bodySmall)
+                            Text("Chat ID saved", style = MaterialTheme.typography.bodySmall)
                         }
                         OutlinedButton(onClick = { credentialsEditing = true }) {
                             Text("Change credentials")
                         }
+                    }
+                    OutlinedButton(
+                        onClick = { onExportTelegramCredentials(password) },
+                        enabled = !isProcessing && password.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Export credentials to file")
+                    }
+                    if (password.isBlank()) {
+                        Text(
+                            "Enter the Archive Cipher passphrase above to export an encrypted credentials file.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
@@ -211,7 +254,7 @@ fun BackupScreen(
                     if (isProcessing) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary)
                     } else {
-                        Text("2. Run Clean Rotation Sync")
+                        Text("Run backup to Telegram")
                     }
                 }
                 OutlinedButton(
