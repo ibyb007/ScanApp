@@ -294,25 +294,43 @@ fun CollageScreen(
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = { isFullscreenEdit = false; selectedFrameIndex = null }) {
                         Icon(Icons.Filled.FullscreenExit, contentDescription = "Exit Fullscreen")
                     }
-                    Text("CamScanner Workspace Mode", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { if (currentPageIndex > 0) goToPage(currentPageIndex - 1) },
+                            enabled = currentPageIndex > 0
+                        ) {
+                            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous page")
+                        }
+                        Text(
+                            "Page ${currentPageIndex + 1} of ${pages.size}",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        IconButton(
+                            onClick = { if (currentPageIndex < pages.lastIndex) goToPage(currentPageIndex + 1) },
+                            enabled = currentPageIndex < pages.lastIndex
+                        ) {
+                            Icon(Icons.Filled.ChevronRight, contentDescription = "Next page")
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        TextButton(onClick = { addBlankPage() }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Add page")
+                        }
+                    }
+
                     IconButton(onClick = { onSaveClick(selectedLayout, selectedPageSize, selectedOrientation, pages) }) {
                         Icon(Icons.Filled.Check, contentDescription = "Save", tint = MaterialTheme.colorScheme.primary)
                     }
                 }
-
-                CollagePageStrip(
-                    pageCount = pages.size,
-                    currentPageIndex = currentPageIndex,
-                    onPageSelected = { goToPage(it) },
-                    onAddPage = { addBlankPage() }
-                )
 
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     CollagePageCanvas(
@@ -335,7 +353,8 @@ fun CollageScreen(
                         },
                         onFrameChange = { index, frame -> updateFrame(index, frame) },
                         onFrameClear = { index -> clearFrame(index) },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        edgeToEdge = true
                     )
                 }
 
@@ -366,38 +385,6 @@ fun CollageScreen(
     }
 }
 
-/** Small horizontal strip for jumping between output pages and adding new ones. */
-@Composable
-private fun CollagePageStrip(
-    pageCount: Int,
-    currentPageIndex: Int,
-    onPageSelected: (Int) -> Unit,
-    onAddPage: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = { if (currentPageIndex > 0) onPageSelected(currentPageIndex - 1) }, enabled = currentPageIndex > 0) {
-            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous page")
-        }
-        Text(
-            "Page ${currentPageIndex + 1} of $pageCount",
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 8.dp)
-        )
-        IconButton(onClick = { if (currentPageIndex < pageCount - 1) onPageSelected(currentPageIndex + 1) }, enabled = currentPageIndex < pageCount - 1) {
-            Icon(Icons.Filled.ChevronRight, contentDescription = "Next page")
-        }
-        Spacer(Modifier.width(8.dp))
-        TextButton(onClick = onAddPage) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Add page")
-        }
-    }
-}
 
 /**
  * Renders one output page: the blank canvas plus every picture frame on it,
@@ -414,7 +401,8 @@ private fun CollagePageCanvas(
     onFrameTap: (Int) -> Unit,
     onFrameChange: (Int, CollagePictureFrame) -> Unit,
     onFrameClear: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    edgeToEdge: Boolean = false
 ) {
     val pageAspect = if (orientation == CollageOrientation.PORTRAIT) {
         pageSize.widthInches / pageSize.heightInches
@@ -428,9 +416,9 @@ private fun CollagePageCanvas(
     ) {
         BoxWithConstraints(
             modifier = Modifier
-                .fillMaxSize(0.97f)
+                .fillMaxSize(if (edgeToEdge) 1f else 0.97f)
                 .aspectRatio(pageAspect)
-                .clip(RoundedCornerShape(8.dp))
+                .let { if (edgeToEdge) it else it.clip(RoundedCornerShape(8.dp)) }
                 .background(Color.White)
                 .border(2.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
