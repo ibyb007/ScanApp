@@ -25,15 +25,21 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /** What the update-check row should currently show. */
@@ -237,217 +243,222 @@ private fun SectionLabel(text: String) {
 }
 
 /**
- * Credit shown in the Developer section: just the name "Bony Biswas", rendered
- * with a faux-3D extruded look (stacked offset layers giving it depth/a
- * raised, embossed feel) in gold, plus a little original silhouette
- * character that moonwalks in alongside it.
- *
- * "Bony" and "Biswas" both start off-screen at the extreme right at the very
- * same instant the moonwalker starts its glide — that's the sync point: the
- * moment the animation begins, both the text and the dancer are already
- * moving together. The words slam past their resting spot into a
- * mid-air collision, bounce off it a couple of times (like they're
- * scuffling), then settle. The moonwalker glides in on its own step cycle,
- * hangs around grooving in place near the settled text, then moonwalks back
- * off-screen and fades out.
+ * Credit shown in the Developer section: a colored truck emoji (🚛) tows the
+ * "Bony Biswas" text in on a rope/chain from the left edge of the screen,
+ * drags it into its resting spot, then drives on and exits — leaving only
+ * the settled text behind. The truck puffs engine smoke the whole time it's
+ * on screen, and while the text is being dragged it throws up a bit of
+ * friction fire/sparks from scraping along the ground.
  */
 @Composable
 private fun DeveloperCreditLine() {
-    // Keyframe values are absolute horizontal offsets (in dp) from each
-    // word's final settled position. Large positive = far off-screen right.
-    val bonyOffset = remember { Animatable(900f) }
-    val biswasOffset = remember { Animatable(900f) }
-    val moonwalkOffset = remember { Animatable(700f) }
-    val moonwalkAlpha = remember { Animatable(1f) }
+    // 0f = tow just starting (text off-screen left), 1f = text fully
+    // settled at its resting spot. Overshoots slightly past 1 then rebounds,
+    // so the arrival reads as a yank-then-settle rather than a dead stop.
+    val progress = remember { Animatable(0f) }
+    // Extra distance the truck drives after letting go of the rope, added
+    // on top of its towing position — carries it off-screen to the right.
+    val truckExit = remember { Animatable(0f) }
+    val truckExitAlpha = remember { Animatable(1f) }
+    var showTruck by remember { mutableStateOf(true) }
+
+    // Continuous looping phases for the exhaust smoke and friction fire —
+    // always ticking so they're in sync whenever they're visible.
+    val fxTransition = rememberInfiniteTransition(label = "creditFx")
+    val smokePhase by fxTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = 1100, easing = LinearEasing)),
+        label = "smokePhase"
+    )
+    val firePhase by fxTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = 180, easing = LinearEasing)),
+        label = "firePhase"
+    )
 
     LaunchedEffect(Unit) {
-        // All three launches start in the same LaunchedEffect frame, so the
-        // moonwalker and both words begin sliding in from the right at
-        // exactly the same instant.
-        launch {
-            bonyOffset.animateTo(
-                targetValue = 0f,
-                animationSpec = keyframes {
-                    durationMillis = 3200
-                    900f at 0 using LinearOutSlowInEasing
-                    -60f at 900 using FastOutLinearInEasing   // slams past center, into Biswas — collision
-                    50f at 1500 using FastOutSlowInEasing      // bounced back from the impact
-                    -28f at 2050 using FastOutSlowInEasing     // scuffle: lunges back in
-                    14f at 2550 using FastOutSlowInEasing      // smaller bounce
-                    -5f at 2900 using FastOutSlowInEasing
-                    0f at 3200
-                }
-            )
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = keyframes {
+                durationMillis = 1900
+                0f at 0 using LinearOutSlowInEasing
+                1.08f at 1300 using FastOutSlowInEasing   // yanked in fast, overshoots the resting spot
+                0.96f at 1550 using FastOutSlowInEasing    // rebounds back
+                1f at 1900 using FastOutSlowInEasing       // settles
+            }
+        )
+        // Rope lets go once the text has settled — truck drives on alone
+        // and fades out as it exits.
+        coroutineScope {
+            launch {
+                truckExit.animateTo(
+                    targetValue = 650f,
+                    animationSpec = tween(durationMillis = 1300, easing = FastOutSlowInEasing)
+                )
+            }
+            launch {
+                truckExitAlpha.animateTo(
+                    targetValue = 0f,
+                    animationSpec = keyframes {
+                        durationMillis = 1300
+                        1f at 0
+                        1f at 900
+                        0f at 1300   // fades out in the final stretch as it drives off
+                    }
+                )
+            }
         }
-        launch {
-            biswasOffset.animateTo(
-                targetValue = 0f,
-                animationSpec = keyframes {
-                    durationMillis = 3200
-                    900f at 0 using LinearOutSlowInEasing
-                    -80f at 950 using FastOutLinearInEasing    // slams further left, deep overlap with Bony
-                    65f at 1550 using FastOutSlowInEasing
-                    -36f at 2100 using FastOutSlowInEasing
-                    18f at 2600 using FastOutSlowInEasing
-                    -6f at 2950 using FastOutSlowInEasing
-                    0f at 3200
-                }
-            )
-        }
-        // Moonwalker: glides in from the right (starting at the same t=0 as
-        // the words above), settles near the text, grooves in place for a
-        // beat, then moonwalks back off-screen to the left and fades.
-        launch {
-            moonwalkOffset.animateTo(
-                targetValue = -500f,
-                animationSpec = keyframes {
-                    durationMillis = 4300
-                    700f at 0 using LinearOutSlowInEasing
-                    0f at 1400 using FastOutSlowInEasing
-                    0f at 3400 using LinearEasing              // hangs around, grooving on the spot
-                    -500f at 4300 using FastOutSlowInEasing    // moonwalks off-screen
-                }
-            )
-        }
-        launch {
-            moonwalkAlpha.animateTo(
-                targetValue = 0f,
-                animationSpec = keyframes {
-                    durationMillis = 4300
-                    1f at 0
-                    1f at 3900
-                    0f at 4300   // fades out as it exits
-                }
-            )
-        }
+        showTruck = false
     }
+
+    // Text width and rope span are fixed estimates (not measured) — fine
+    // for a decorative rope/chain, since the truck's position is derived
+    // directly from the text's position so the gap between them stays
+    // visually consistent throughout the tow.
+    val textWidthDp = 150f
+    val ropeSpanDp = 40f
+    val towLeadGapDp = textWidthDp + ropeSpanDp
+    val towStartX = -1000f
+
+    val textLeftX = towStartX * (1f - progress.value)
+    val truckLeftX = textLeftX + towLeadGapDp + truckExit.value
+    val isDragging = progress.value < 0.98f
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .heightIn(min = 58.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
-        Row {
-            Extruded3DText(
-                text = "Bony",
-                modifier = Modifier.offset(x = bonyOffset.value.dp)
-            )
-            Spacer(Modifier.width(10.dp))
-            Extruded3DText(
-                text = "Biswas",
-                modifier = Modifier.offset(x = biswasOffset.value.dp)
+        if (showTruck) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val ropeAlpha = (1f - (truckExit.value / 40f)).coerceIn(0f, 1f)
+                val groundY = size.height * 0.86f
+
+                // Rope/chain between the text's near edge and the truck's
+                // back — only visible while still attached, fades the
+                // instant the truck starts pulling away.
+                if (ropeAlpha > 0f) {
+                    drawTowRope(
+                        fromX = (textLeftX + textWidthDp).dp.toPx(),
+                        toX = truckLeftX.dp.toPx(),
+                        y = groundY,
+                        alpha = ropeAlpha
+                    )
+                }
+
+                // Engine smoke puffing from the truck's back the whole time
+                // it's on screen.
+                drawExhaustSmoke(
+                    anchorX = truckLeftX.dp.toPx(),
+                    anchorY = size.height * 0.40f,
+                    phase = smokePhase
+                )
+
+                // Friction sparks/fire where the text is scraping along the
+                // ground while it's being dragged.
+                if (isDragging) {
+                    drawFrictionFire(
+                        fromX = textLeftX.dp.toPx(),
+                        toX = (textLeftX + textWidthDp).dp.toPx(),
+                        y = groundY,
+                        phase = firePhase
+                    )
+                }
+            }
+
+            // Truck is deliberately larger than the text it's towing.
+            Text(
+                text = "🚛",
+                fontSize = 42.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .offset(x = truckLeftX.dp)
+                    .alpha(truckExitAlpha.value)
             )
         }
-        MoonwalkerSilhouette(
+
+        Extruded3DText(
+            text = "Bony Biswas",
             modifier = Modifier
-                .align(androidx.compose.ui.Alignment.CenterStart)
-                .offset(x = moonwalkOffset.value.dp)
-                .alpha(moonwalkAlpha.value)
+                .align(Alignment.BottomStart)
+                .offset(x = textLeftX.dp, y = (-4).dp)
         )
     }
 }
 
-/**
- * A small original silhouette character doing a moonwalk-style step cycle:
- * one leg planted forward with the heel down while the other trails behind
- * up on its toe, swapping continuously — the classic illusion of walking
- * forward while actually gliding. One arm is bent up near the chest, the
- * other trails back, and the whole figure has a slight bounce to sell the
- * groove. Drawn entirely with Canvas primitives as an original character
- * design — not a reproduction of any existing footage or artwork.
- */
-@Composable
-private fun MoonwalkerSilhouette(modifier: Modifier = Modifier) {
-    val infinite = rememberInfiniteTransition(label = "moonwalkCycle")
-    // Drives which leg is "forward, heel down" vs "trailing, up on toe",
-    // continuously swapping — the stepping motion of the glide.
-    val stepPhase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 520, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "stepPhase"
+/** Draws a loosely sagging rope/chain between two ground-level points, with a few link/knot dots along it. */
+private fun DrawScope.drawTowRope(fromX: Float, toX: Float, y: Float, alpha: Float) {
+    if (toX <= fromX) return
+    val midX = (fromX + toX) / 2f
+    val path = Path().apply {
+        moveTo(fromX, y)
+        quadraticTo(midX, y + 10f, toX, y)
+    }
+    drawPath(
+        path = path,
+        color = Color(0xFF5B4636).copy(alpha = alpha),
+        style = Stroke(width = 5f, cap = StrokeCap.Round)
     )
-    // Tiny up-down bounce on each step for a bit of groove.
-    val bob by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 260, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bob"
-    )
-
-    Canvas(modifier = modifier.size(40.dp, 56.dp)) {
-        val w = size.width
-        val h = size.height
-        val silhouette = Color(0xFF1C1C1C)
-        val liftY = bob * (h * 0.02f)
-
-        // Head
+    val linkCount = 4
+    for (i in 1 until linkCount) {
+        val t = i / linkCount.toFloat()
+        val x = fromX + (toX - fromX) * t
         drawCircle(
-            color = silhouette,
-            radius = w * 0.17f,
-            center = androidx.compose.ui.geometry.Offset(w * 0.52f, h * 0.13f - liftY)
+            color = Color(0xFF3A2E24).copy(alpha = alpha),
+            radius = 4f,
+            center = Offset(x, y + 10f * (4f * t * (1f - t)))
         )
+    }
+}
 
-        // Torso — slight backward lean sells the glide.
-        drawLine(
-            color = silhouette,
-            start = androidx.compose.ui.geometry.Offset(w * 0.52f, h * 0.24f - liftY),
-            end = androidx.compose.ui.geometry.Offset(w * 0.46f, h * 0.56f - liftY),
-            strokeWidth = w * 0.16f,
-            cap = androidx.compose.ui.graphics.StrokeCap.Round
+/** Small puffs drifting up and back from the truck's tailpipe, looping continuously while the truck is on screen. */
+private fun DrawScope.drawExhaustSmoke(anchorX: Float, anchorY: Float, phase: Float) {
+    repeat(3) { i ->
+        val t = (phase + i / 3f) % 1f
+        val rise = t * 40f
+        val drift = t * -26f
+        val alpha = (1f - t) * 0.55f
+        val radius = 6f + t * 10f
+        drawCircle(
+            color = Color(0xFF8C8C8C).copy(alpha = alpha),
+            radius = radius,
+            center = Offset(anchorX + drift, anchorY - rise)
         )
+    }
+}
 
-        // Bent arm up near the chest (the classic pose), other arm trailing back.
-        drawLine(
-            color = silhouette,
-            start = androidx.compose.ui.geometry.Offset(w * 0.50f, h * 0.30f - liftY),
-            end = androidx.compose.ui.geometry.Offset(w * 0.22f, h * 0.20f - liftY),
-            strokeWidth = w * 0.08f,
-            cap = androidx.compose.ui.graphics.StrokeCap.Round
-        )
-        drawLine(
-            color = silhouette,
-            start = androidx.compose.ui.geometry.Offset(w * 0.48f, h * 0.34f - liftY),
-            end = androidx.compose.ui.geometry.Offset(w * 0.72f, h * 0.48f - liftY),
-            strokeWidth = w * 0.08f,
-            cap = androidx.compose.ui.graphics.StrokeCap.Round
-        )
+/** Small flickering flame tufts and spark dashes where the text scrapes the ground while being towed. */
+private fun DrawScope.drawFrictionFire(fromX: Float, toX: Float, y: Float, phase: Float) {
+    if (toX <= fromX) return
+    val tuftCount = 4
+    for (i in 0 until tuftCount) {
+        val baseT = i / (tuftCount - 1).toFloat()
+        val x = fromX + (toX - fromX) * baseT
+        val flicker = (phase + baseT * 0.6f) % 1f
+        val height = 10f + flicker * 14f
+        val sway = (flicker - 0.5f) * 8f
 
-        // Legs — alternate which one is planted forward (heel down) versus
-        // trailing behind (heel lifted, dragging on the toe), swapping every
-        // cycle as they slide sideways past each other.
-        val frontIsLeft = stepPhase < 0.5f
-        val cyclePos = if (frontIsLeft) stepPhase * 2f else (stepPhase - 0.5f) * 2f
+        val flamePath = Path().apply {
+            moveTo(x - 6f, y)
+            quadraticTo(x + sway, y - height, x, y - height * 1.6f)
+            quadraticTo(x - sway, y - height, x + 6f, y)
+            close()
+        }
+        val flameColor = if (flicker < 0.5f) Color(0xFFFF7A18) else Color(0xFFFFC93C)
+        drawPath(flamePath, color = flameColor.copy(alpha = 0.85f))
 
-        val forwardKneeX = w * (0.40f - 0.10f * cyclePos)
-        val forwardFootX = w * (0.28f - 0.16f * cyclePos)
-        val trailingKneeX = w * (0.54f + 0.10f * cyclePos)
-        val trailingFootX = w * (0.68f + 0.18f * cyclePos)
-        val trailingHeelLift = h * 0.05f * (1f - cyclePos)
-
-        val hipY = h * 0.56f - liftY
-        val kneeY = h * 0.78f - liftY
-        val footY = h * 0.97f - liftY
-
-        val leftKneeX = if (frontIsLeft) forwardKneeX else trailingKneeX
-        val leftFootX = if (frontIsLeft) forwardFootX else trailingFootX
-        val leftFootY = if (frontIsLeft) footY else footY - trailingHeelLift
-
-        val rightKneeX = if (frontIsLeft) trailingKneeX else forwardKneeX
-        val rightFootX = if (frontIsLeft) trailingFootX else forwardFootX
-        val rightFootY = if (frontIsLeft) footY - trailingHeelLift else footY
-
-        val hipPoint = androidx.compose.ui.geometry.Offset(w * 0.48f, hipY)
-        drawLine(silhouette, hipPoint, androidx.compose.ui.geometry.Offset(leftKneeX, kneeY), strokeWidth = w * 0.09f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        drawLine(silhouette, androidx.compose.ui.geometry.Offset(leftKneeX, kneeY), androidx.compose.ui.geometry.Offset(leftFootX, leftFootY), strokeWidth = w * 0.09f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        drawLine(silhouette, hipPoint, androidx.compose.ui.geometry.Offset(rightKneeX, kneeY), strokeWidth = w * 0.09f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        drawLine(silhouette, androidx.compose.ui.geometry.Offset(rightKneeX, kneeY), androidx.compose.ui.geometry.Offset(rightFootX, rightFootY), strokeWidth = w * 0.09f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        if (flicker > 0.7f) {
+            drawLine(
+                color = Color(0xFFFFE9A8),
+                start = Offset(x, y - 2f),
+                end = Offset(x + sway * 2f, y - 10f),
+                strokeWidth = 2f,
+                cap = StrokeCap.Round
+            )
+        }
     }
 }
 
