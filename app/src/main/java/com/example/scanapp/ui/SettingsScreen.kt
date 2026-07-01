@@ -244,20 +244,22 @@ private fun SectionLabel(text: String) {
 
 /**
  * Credit shown in the Developer section: a colored truck emoji (🚛) tows the
- * "Bony Biswas" text in on a rope/chain from the left edge of the screen,
- * drags it into its resting spot, then drives on and exits — leaving only
- * the settled text behind. The truck puffs engine smoke the whole time it's
+ * "Bony Biswas" text in on a rope/chain from the right edge of the screen,
+ * drags it into its resting spot, then drives on and exits off the left —
+ * leaving only the settled text behind. The rope is tethered from the back
+ * of the truck (its trailing side, since the truck is leading the tow
+ * moving right-to-left). The truck puffs engine smoke the whole time it's
  * on screen, and while the text is being dragged it throws up a bit of
  * friction fire/sparks from scraping along the ground.
  */
 @Composable
 private fun DeveloperCreditLine() {
-    // 0f = tow just starting (text off-screen left), 1f = text fully
+    // 0f = tow just starting (text off-screen right), 1f = text fully
     // settled at its resting spot. Overshoots slightly past 1 then rebounds,
     // so the arrival reads as a yank-then-settle rather than a dead stop.
     val progress = remember { Animatable(0f) }
     // Extra distance the truck drives after letting go of the rope, added
-    // on top of its towing position — carries it off-screen to the right.
+    // on top of its towing position — carries it off-screen to the left.
     val truckExit = remember { Animatable(0f) }
     val truckExitAlpha = remember { Animatable(1f) }
     var showTruck by remember { mutableStateOf(true) }
@@ -313,17 +315,21 @@ private fun DeveloperCreditLine() {
         showTruck = false
     }
 
-    // Text width and rope span are fixed estimates (not measured) — fine
+    // Truck width and rope span are fixed estimates (not measured) — fine
     // for a decorative rope/chain, since the truck's position is derived
     // directly from the text's position so the gap between them stays
     // visually consistent throughout the tow.
     val textWidthDp = 150f
+    val truckWidthDp = 46f
     val ropeSpanDp = 40f
-    val towLeadGapDp = textWidthDp + ropeSpanDp
-    val towStartX = -1000f
+    val towLeadGapDp = truckWidthDp + ropeSpanDp
+    val towStartX = 1000f
 
     val textLeftX = towStartX * (1f - progress.value)
-    val truckLeftX = textLeftX + towLeadGapDp + truckExit.value
+    // Truck leads the tow (it's to the text's left, moving further left as
+    // it goes), so its position is the text's position minus the gap — and
+    // once the rope lets go, minus the extra exit distance too.
+    val truckLeftX = textLeftX - towLeadGapDp - truckExit.value
     val isDragging = progress.value < 0.98f
 
     Box(
@@ -337,22 +343,23 @@ private fun DeveloperCreditLine() {
                 val ropeAlpha = (1f - (truckExit.value / 40f)).coerceIn(0f, 1f)
                 val groundY = size.height * 0.86f
 
-                // Rope/chain between the text's near edge and the truck's
-                // back — only visible while still attached, fades the
-                // instant the truck starts pulling away.
+                // Rope/chain between the truck's back (its trailing/right
+                // edge, since it's leading the tow to the left) and the
+                // text's near edge — only visible while still attached,
+                // fades the instant the truck starts pulling away.
                 if (ropeAlpha > 0f) {
                     drawTowRope(
-                        fromX = (textLeftX + textWidthDp).dp.toPx(),
-                        toX = truckLeftX.dp.toPx(),
+                        fromX = (truckLeftX + truckWidthDp).dp.toPx(),
+                        toX = textLeftX.dp.toPx(),
                         y = groundY,
                         alpha = ropeAlpha
                     )
                 }
 
-                // Engine smoke puffing from the truck's back the whole time
-                // it's on screen.
+                // Engine smoke puffing from the truck's back (its trailing
+                // right edge) the whole time it's on screen.
                 drawExhaustSmoke(
-                    anchorX = truckLeftX.dp.toPx(),
+                    anchorX = (truckLeftX + truckWidthDp).dp.toPx(),
                     anchorY = size.height * 0.40f,
                     phase = smokePhase
                 )
@@ -419,7 +426,9 @@ private fun DrawScope.drawExhaustSmoke(anchorX: Float, anchorY: Float, phase: Fl
     repeat(3) { i ->
         val t = (phase + i / 3f) % 1f
         val rise = t * 40f
-        val drift = t * -26f
+        // Truck now faces and travels leftward, so its tailpipe trails
+        // smoke back to the right (opposite the direction of travel).
+        val drift = t * 26f
         val alpha = (1f - t) * 0.55f
         val radius = 6f + t * 10f
         drawCircle(
