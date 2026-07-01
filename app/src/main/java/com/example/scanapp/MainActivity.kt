@@ -317,7 +317,10 @@ class MainActivity : ComponentActivity() {
                         onBackClick = { currentScreen = Screen.HOME },
                         onSaveClick = { layout, pageSize, orientation, pages ->
                             saveCollageAsNewDocument(layout, pageSize, orientation, pages)
-                        }
+                        },
+                        onHomeClick = { currentScreen = Screen.HOME },
+                        onSettingsClick = { currentScreen = Screen.SETTINGS },
+                        onBackupClick = { currentScreen = Screen.BACKUP }
                     )
                 Screen.BACKUP -> {
                     val savedTelegramCreds = com.example.scanapp.backup.BackupEngine.getTelegramCredentials(applicationContext)
