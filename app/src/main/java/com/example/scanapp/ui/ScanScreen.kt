@@ -23,9 +23,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
+import com.example.scanapp.export.CompressionStrategy
 import com.example.scanapp.export.OutputFormat
 import kotlinx.coroutines.delay
 
@@ -44,7 +46,8 @@ data class ExportUiState(
     val fileName: String = "",
     val customWidth: Int? = null,   // null = keep the scanned page's original width
     val customHeight: Int? = null,  // null = keep the scanned page's original height
-    val dpi: Int? = null            // null = don't override DPI metadata
+    val dpi: Int? = null,           // null = don't override DPI metadata
+    val compressionStrategy: CompressionStrategy = CompressionStrategy.BALANCED
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -440,6 +443,32 @@ fun ScanScreen(
                             "The app will reduce quality (and resolution if needed) to fit this size.",
                             style = MaterialTheme.typography.bodySmall
                         )
+
+                        Spacer(Modifier.height(16.dp))
+
+                        Text("Compression style", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(6.dp))
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            CompressionStrategyOption(
+                                title = "Balanced",
+                                description = "Keeps full resolution, lowers JPEG quality as far as needed. Can look blocky at small targets.",
+                                selected = uiState.compressionStrategy == CompressionStrategy.BALANCED,
+                                onClick = {
+                                    uiState = uiState.copy(compressionStrategy = CompressionStrategy.BALANCED)
+                                    reportChange()
+                                }
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            CompressionStrategyOption(
+                                title = "Preserve quality",
+                                description = "Keeps JPEG quality high, shrinks the page dimensions instead. Cleaner text/edges, smaller image.",
+                                selected = uiState.compressionStrategy == CompressionStrategy.PRESERVE_QUALITY,
+                                onClick = {
+                                    uiState = uiState.copy(compressionStrategy = CompressionStrategy.PRESERVE_QUALITY)
+                                    reportChange()
+                                }
+                            )
+                        }
                     } else {
                         Text("Quality: ${uiState.quality}")
                         Slider(
@@ -551,6 +580,34 @@ private fun SegmentedUnitToggle(selected: SizeUnit, onSelect: (SizeUnit) -> Unit
 @Composable
 private fun SegmentedButtonOption(label: String, selected: Boolean, onClick: () -> Unit) {
     FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
+}
+
+@Composable
+private fun CompressionStrategyOption(
+    title: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            RadioButton(selected = selected, onClick = onClick)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
 }
 
 /** Display unit for the Resolution & DPI fields. Export always stores/uses pixels internally. */
