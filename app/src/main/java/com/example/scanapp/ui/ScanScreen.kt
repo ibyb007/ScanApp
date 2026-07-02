@@ -38,7 +38,10 @@ data class ExportUiState(
     val format: OutputFormat = OutputFormat.PDF,
     val sizeLimitBytes: Long? = 500L * 1024, // default 500KB cap (KB is now the default unit)
     val quality: Int = 90,
-    val fileName: String = ""
+    val fileName: String = "",
+    val customWidth: Int? = null,   // null = keep the scanned page's original width
+    val customHeight: Int? = null,  // null = keep the scanned page's original height
+    val dpi: Int? = null            // null = don't override DPI metadata
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,7 +62,10 @@ fun ScanScreen(
     initialUseSizeLimit: Boolean = true,
     initialSizeUnit: SizeUnit = SizeUnit.KB,
     initialSizeText: String = "500",
-    onExportUiStateChange: (ExportUiState, useSizeLimit: Boolean, sizeUnit: SizeUnit, sizeText: String) -> Unit = { _, _, _, _ -> }
+    onExportUiStateChange: (ExportUiState, useSizeLimit: Boolean, sizeUnit: SizeUnit, sizeText: String) -> Unit = { _, _, _, _ -> },
+    // Reads a scanned page's real pixel width/height/DPI off the main thread so the
+    // resolution fields can be pre-filled with the source image's current values.
+    fetchImageInfo: suspend (Uri) -> Triple<Int, Int, Int>? = { null }
 ) {
     var uiState by remember { mutableStateOf(initialUiState) }
     var useSizeLimit by remember { mutableStateOf(initialUseSizeLimit) }
@@ -73,6 +79,46 @@ fun ScanScreen(
     // eventually taps Export or just navigates away.
     fun reportChange() {
         onExportUiStateChange(uiState, useSizeLimit, sizeUnit, sizeText)
+    }
+
+    // Resolution/DPI text fields — kept as strings for the same reason as sizeText
+    // (mid-edit states like "" shouldn't get force-corrected).
+    var widthText by remember { mutableStateOf(initialUiState.customWidth?.toString() ?: "") }
+    var heightText by remember { mutableStateOf(initialUiState.customHeight?.toString() ?: "") }
+    var dpiText by remember { mutableStateOf(initialUiState.dpi?.toString() ?: "") }
+    // Tracks whether the user has touched the resolution fields yet, so the one-time
+    // "fetch current width/height/dpi" prefill doesn't clobber their edits later.
+    var hasPrefilledResolution by remember { mutableStateOf(initialUiState.customWidth != null) }
+
+    LaunchedEffect(scannedPages.firstOrNull()) {
+        val firstPage = scannedPages.firstOrNull() ?: return@LaunchedEffect
+        if (hasPrefilledResolution) return@LaunchedEffect
+        val info = fetchImageInfo(firstPage) ?: return@LaunchedEffect
+        val (w, h, dpi) = info
+        widthText = w.toString()
+        heightText = h.toString()
+        dpiText = dpi.toString()
+        hasPrefilledResolution = true
+        uiState = uiState.copy(customWidth = w, customHeight = h, dpi = dpi)
+        reportChange()
+    }
+
+    fun applyWidthText(text: String) {
+        widthText = text
+        uiState = uiState.copy(customWidth = text.toIntOrNull()?.takeIf { it > 0 })
+        reportChange()
+    }
+
+    fun applyHeightText(text: String) {
+        heightText = text
+        uiState = uiState.copy(customHeight = text.toIntOrNull()?.takeIf { it > 0 })
+        reportChange()
+    }
+
+    fun applyDpiText(text: String) {
+        dpiText = text
+        uiState = uiState.copy(dpi = text.toIntOrNull()?.takeIf { it > 0 })
+        reportChange()
     }
 
     fun applySizeText(text: String, unit: SizeUnit) {
@@ -178,6 +224,54 @@ fun ScanScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (uiState.format != OutputFormat.PDF) {
+                        Spacer(Modifier.height(24.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(16.dp))
+
+                        Text("Resolution & DPI", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Pre-filled with the scan's current values — edit to resize or change print density.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = widthText,
+                                onValueChange = { applyWidthText(it) },
+                                label = { Text("Width (px)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = heightText,
+                                onValueChange = { applyHeightText(it) },
+                                label = { Text("Height (px)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = dpiText,
+                            onValueChange = { applyDpiText(it) },
+                            label = { Text("DPI") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.width(140.dp)
+                        )
+                    }
 
                     Spacer(Modifier.height(16.dp))
 
