@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -13,7 +14,9 @@ data class ExportOptions(
     val format: OutputFormat,
     val targetSizeBytes: Long? = null,   // null = no size constraint, use quality directly
     val quality: Int = 90,               // used when no target size given (0-100)
-    val maxDimension: Int? = null        // optional manual downscale cap (longest side, px)
+    val maxDimension: Int? = null,       // optional manual downscale cap (longest side, px)
+    val targetWidth: Int? = null,        // exact output width in px; null = keep source width
+    val targetHeight: Int? = null        // exact output height in px; null = keep source height
 )
 
 data class ExportResult(
@@ -48,6 +51,11 @@ class ExportEngine(private val context: Context) {
         require(options.format != OutputFormat.PDF) { "Use exportAsPdf for PDF output" }
 
         var bitmap = original
+        if (options.targetWidth != null && options.targetHeight != null &&
+            (options.targetWidth != bitmap.width || options.targetHeight != bitmap.height)
+        ) {
+            bitmap = Bitmap.createScaledBitmap(bitmap, options.targetWidth, options.targetHeight, true)
+        }
         options.maxDimension?.let { cap ->
             bitmap = downscaleTo(bitmap, cap)
         }
@@ -187,6 +195,52 @@ class ExportEngine(private val context: Context) {
             ?: throw IllegalArgumentException("Cannot open URI: $uri")
         return input.use { BitmapFactory.decodeStream(it) }
     }
+
+    /**
+     * Writes X/Y resolution (DPI) metadata into a JPEG or PNG file already on disk.
+     * Must run after the file's bytes are fully written, since ExifInterface edits
+     * an existing file in place rather than an in-memory byte stream.
+     */
+    fun writeDpi(file: File, dpi: Int) {
+        val exif = ExifInterface(file.absolutePath)
+        exif.setAttribute(ExifInterface.TAG_X_RESOLUTION, "$dpi/1")
+        exif.setAttribute(ExifInterface.TAG_Y_RESOLUTION, "$dpi/1")
+        exif.setAttribute(ExifInterface.TAG_RESOLUTION_UNIT, ExifInterface.RESOLUTION_UNIT_INCHES.toString())
+        exif.saveAttributes()
+    }
+
+    /** Reads a scanned page's current pixel dimensions and DPI (defaults to 96 if unset). */
+    fun readImageInfo(uri: Uri): ImageInfo {
+        val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, boundsOptions) }
+
+        val dpi = try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val exif = ExifInterface(stream)
+                val xRes = exif.getAttribute(ExifInterface.TAG_X_RESOLUTION)
+                xRes?.let { parseRational(it) }
+            }
+        } catch (_: Exception) {
+            null
+        } ?: 96
+
+        return ImageInfo(
+            width = boundsOptions.outWidth.coerceAtLeast(0),
+            height = boundsOptions.outHeight.coerceAtLeast(0),
+            dpi = dpi
+        )
+    }
+
+    private fun parseRational(value: String): Int? {
+        val parts = value.split("/")
+        if (parts.size != 2) return value.toDoubleOrNull()?.toInt()
+        val num = parts[0].toDoubleOrNull() ?: return null
+        val den = parts[1].toDoubleOrNull() ?: return null
+        if (den == 0.0) return null
+        return (num / den).toInt()
+    }
+
+    data class ImageInfo(val width: Int, val height: Int, val dpi: Int)
 
     data class ExportMeta(val quality: Int, val width: Int, val height: Int)
 }

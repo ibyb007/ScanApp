@@ -8,11 +8,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -38,7 +41,10 @@ data class ExportUiState(
     val format: OutputFormat = OutputFormat.PDF,
     val sizeLimitBytes: Long? = 500L * 1024, // default 500KB cap (KB is now the default unit)
     val quality: Int = 90,
-    val fileName: String = ""
+    val fileName: String = "",
+    val customWidth: Int? = null,   // null = keep the scanned page's original width
+    val customHeight: Int? = null,  // null = keep the scanned page's original height
+    val dpi: Int? = null            // null = don't override DPI metadata
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,7 +65,10 @@ fun ScanScreen(
     initialUseSizeLimit: Boolean = true,
     initialSizeUnit: SizeUnit = SizeUnit.KB,
     initialSizeText: String = "500",
-    onExportUiStateChange: (ExportUiState, useSizeLimit: Boolean, sizeUnit: SizeUnit, sizeText: String) -> Unit = { _, _, _, _ -> }
+    onExportUiStateChange: (ExportUiState, useSizeLimit: Boolean, sizeUnit: SizeUnit, sizeText: String) -> Unit = { _, _, _, _ -> },
+    // Reads a scanned page's real pixel width/height/DPI off the main thread so the
+    // resolution fields can be pre-filled with the source image's current values.
+    fetchImageInfo: suspend (Uri) -> Triple<Int, Int, Int>? = { null }
 ) {
     var uiState by remember { mutableStateOf(initialUiState) }
     var useSizeLimit by remember { mutableStateOf(initialUseSizeLimit) }
@@ -73,6 +82,89 @@ fun ScanScreen(
     // eventually taps Export or just navigates away.
     fun reportChange() {
         onExportUiStateChange(uiState, useSizeLimit, sizeUnit, sizeText)
+    }
+
+    // Resolution/DPI text fields — kept as strings for the same reason as sizeText
+    // (mid-edit states like "" shouldn't get force-corrected).
+    var widthText by remember { mutableStateOf(initialUiState.customWidth?.toString() ?: "") }
+    var heightText by remember { mutableStateOf(initialUiState.customHeight?.toString() ?: "") }
+    var dpiText by remember { mutableStateOf(initialUiState.dpi?.toString() ?: "") }
+    var resolutionUnit by remember { mutableStateOf(LengthUnit.PX) }
+    // Master on/off for the whole section. Off = export uses the scan's original
+    // resolution/DPI untouched; uiState.customWidth/customHeight/dpi stay null.
+    var resolutionEnabled by remember {
+        mutableStateOf(initialUiState.customWidth != null || initialUiState.dpi != null)
+    }
+    // Tracks whether the user has touched the resolution fields yet, so the one-time
+    // "fetch current width/height/dpi" prefill doesn't clobber their edits later.
+    var hasPrefilledResolution by remember { mutableStateOf(initialUiState.customWidth != null) }
+
+    LaunchedEffect(scannedPages.firstOrNull()) {
+        val firstPage = scannedPages.firstOrNull() ?: return@LaunchedEffect
+        if (hasPrefilledResolution) return@LaunchedEffect
+        val info = fetchImageInfo(firstPage) ?: return@LaunchedEffect
+        val (w, h, dpi) = info
+        widthText = w.toString()
+        heightText = h.toString()
+        dpiText = dpi.toString()
+        hasPrefilledResolution = true
+        if (resolutionEnabled) {
+            uiState = uiState.copy(customWidth = w, customHeight = h, dpi = dpi)
+            reportChange()
+        }
+    }
+
+    // dpi used just for unit math (cm/inch <-> px); falls back to a sane default
+    // while the DPI field is blank/invalid so conversions never divide by zero.
+    fun activeDpiForConversion(): Int = dpiText.toIntOrNull()?.takeIf { it > 0 } ?: 96
+
+    fun applyWidthText(text: String) {
+        widthText = text
+        uiState = uiState.copy(customWidth = lengthToPx(text, resolutionUnit, activeDpiForConversion()))
+        reportChange()
+    }
+
+    fun applyHeightText(text: String) {
+        heightText = text
+        uiState = uiState.copy(customHeight = lengthToPx(text, resolutionUnit, activeDpiForConversion()))
+        reportChange()
+    }
+
+    fun applyDpiText(text: String) {
+        dpiText = text
+        val newDpi = text.toIntOrNull()?.takeIf { it > 0 }
+        uiState = uiState.copy(dpi = newDpi)
+        // If we're displaying physical units, changing DPI resamples the pixel count
+        // so the shown cm/inch size stays put rather than silently drifting.
+        if (resolutionUnit != LengthUnit.PX && newDpi != null) {
+            uiState = uiState.copy(
+                customWidth = lengthToPx(widthText, resolutionUnit, newDpi),
+                customHeight = lengthToPx(heightText, resolutionUnit, newDpi)
+            )
+        }
+        reportChange()
+    }
+
+    fun changeResolutionUnit(newUnit: LengthUnit) {
+        val dpi = activeDpiForConversion()
+        widthText = pxToLength(uiState.customWidth, newUnit, dpi)
+        heightText = pxToLength(uiState.customHeight, newUnit, dpi)
+        resolutionUnit = newUnit
+    }
+
+    fun setResolutionEnabled(checked: Boolean) {
+        resolutionEnabled = checked
+        uiState = if (checked) {
+            val dpi = activeDpiForConversion()
+            uiState.copy(
+                customWidth = lengthToPx(widthText, resolutionUnit, dpi),
+                customHeight = lengthToPx(heightText, resolutionUnit, dpi),
+                dpi = dpiText.toIntOrNull()?.takeIf { it > 0 }
+            )
+        } else {
+            uiState.copy(customWidth = null, customHeight = null, dpi = null)
+        }
+        reportChange()
     }
 
     fun applySizeText(text: String, unit: SizeUnit) {
@@ -123,6 +215,7 @@ fun ScanScreen(
                     .padding(padding)
                     .padding(16.dp)
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
             ) {
                 Button(onClick = onScanClick, modifier = Modifier.fillMaxWidth()) {
                     Text(if (scannedPages.isEmpty()) "Scan Document" else "Scan More Pages")
@@ -178,6 +271,108 @@ fun ScanScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (uiState.format != OutputFormat.PDF) {
+                        Spacer(Modifier.height(24.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(16.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Resolution & DPI", style = MaterialTheme.typography.titleMedium)
+                            Switch(
+                                checked = resolutionEnabled,
+                                onCheckedChange = { checked -> setResolutionEnabled(checked) }
+                            )
+                        }
+
+                        if (resolutionEnabled) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Pre-filled with the scan's current values — edit to resize or change print density.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Unit:", style = MaterialTheme.typography.bodySmall)
+                                Spacer(Modifier.width(8.dp))
+                                SegmentedLengthUnitToggle(
+                                    selected = resolutionUnit,
+                                    onSelect = { unit -> changeResolutionUnit(unit) }
+                                )
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = widthText,
+                                    onValueChange = { applyWidthText(it) },
+                                    label = { Text("Width (${resolutionUnit.label})") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedTextField(
+                                    value = heightText,
+                                    onValueChange = { applyHeightText(it) },
+                                    label = { Text("Height (${resolutionUnit.label})") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+
+                            Spacer(Modifier.height(12.dp))
+
+                            OutlinedTextField(
+                                value = dpiText,
+                                onValueChange = { applyDpiText(it) },
+                                label = { Text("DPI") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.width(140.dp)
+                            )
+
+                            Spacer(Modifier.height(10.dp))
+
+                            val estimatedBytes = estimateImageBytes(
+                                uiState.customWidth ?: 0,
+                                uiState.customHeight ?: 0,
+                                uiState.format,
+                                uiState.quality
+                            )
+                            Text(
+                                buildString {
+                                    append("Estimated size: ~${formatByteSize(estimatedBytes)}")
+                                    if (uiState.format != OutputFormat.PNG) append(" at quality ${uiState.quality}")
+                                    if (useSizeLimit) append(" — capped to your size limit below on export")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                "DPI is print-density metadata only — it doesn't change file size. Switching units just converts the display; pixel values are what's actually exported.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Off — export will use the scan's original resolution and DPI.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
 
                     Spacer(Modifier.height(16.dp))
 
@@ -356,4 +551,61 @@ private fun SegmentedUnitToggle(selected: SizeUnit, onSelect: (SizeUnit) -> Unit
 @Composable
 private fun SegmentedButtonOption(label: String, selected: Boolean, onClick: () -> Unit) {
     FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
+}
+
+/** Display unit for the Resolution & DPI fields. Export always stores/uses pixels internally. */
+enum class LengthUnit(val label: String) { PX("px"), CM("cm"), INCH("in") }
+
+@Composable
+private fun SegmentedLengthUnitToggle(selected: LengthUnit, onSelect: (LengthUnit) -> Unit) {
+    Row {
+        LengthUnit.entries.forEachIndexed { index, unit ->
+            if (index > 0) Spacer(Modifier.width(4.dp))
+            SegmentedButtonOption(unit.label, selected == unit) { onSelect(unit) }
+        }
+    }
+}
+
+/** Converts a pixel count to a display string in the given unit, using [dpi] for the physical units. */
+private fun pxToLength(px: Int?, unit: LengthUnit, dpi: Int): String {
+    if (px == null) return ""
+    return when (unit) {
+        LengthUnit.PX -> px.toString()
+        LengthUnit.INCH -> "%.2f".format(px / dpi.toDouble())
+        LengthUnit.CM -> "%.2f".format(px / dpi.toDouble() * 2.54)
+    }
+}
+
+/** Converts a typed value in the given unit back to whole pixels, using [dpi] for the physical units. */
+private fun lengthToPx(value: String, unit: LengthUnit, dpi: Int): Int? {
+    val num = value.toDoubleOrNull()?.takeIf { it > 0 } ?: return null
+    return when (unit) {
+        LengthUnit.PX -> num.toInt()
+        LengthUnit.INCH -> (num * dpi).toInt()
+        LengthUnit.CM -> (num / 2.54 * dpi).toInt()
+    }
+}
+
+/**
+ * Rough, content-independent estimate of output file size — real compressed size
+ * always depends on how busy/detailed the actual scan is, so this is only a guide
+ * for the UI, not a guarantee.
+ */
+private fun estimateImageBytes(width: Int, height: Int, format: OutputFormat, quality: Int): Long {
+    if (width <= 0 || height <= 0) return 0L
+    val pixels = width.toLong() * height.toLong()
+    val bitsPerPixel = if (format == OutputFormat.PNG) {
+        // PNG is lossless; scanned documents (mostly flat white + text) compress well in practice.
+        2.5
+    } else {
+        // JPEG: bits/pixel grows non-linearly with quality.
+        0.1 + Math.pow(quality / 100.0, 1.5) * 2.9
+    }
+    return (pixels * bitsPerPixel / 8.0).toLong()
+}
+
+private fun formatByteSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.2f MB".format(bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> "%.0f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
 }

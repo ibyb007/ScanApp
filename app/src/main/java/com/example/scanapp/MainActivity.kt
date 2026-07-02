@@ -283,6 +283,16 @@ class MainActivity : ComponentActivity() {
                             exportUseSizeLimit = useSizeLimit
                             exportSizeUnit = sizeUnit
                             exportSizeText = sizeText
+                        },
+                        fetchImageInfo = { uri ->
+                            withContext(Dispatchers.IO) {
+                                try {
+                                    val info = exportEngine.readImageInfo(uri)
+                                    Triple(info.width, info.height, info.dpi)
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
                         }
                     )
                     Screen.SETTINGS -> com.example.scanapp.ui.SettingsScreen(
@@ -1061,16 +1071,30 @@ class MainActivity : ComponentActivity() {
                                     ExportOptions(
                                         format = uiState.format,
                                         targetSizeBytes = targetBytes,
-                                        quality = uiState.quality
+                                        quality = uiState.quality,
+                                        targetWidth = uiState.customWidth,
+                                        targetHeight = uiState.customHeight
                                     )
                                 )
-                                val bytes = out.toByteArray()
+                                var bytes = out.toByteArray()
                                 val baseName = if (uiState.fileName.isNotBlank()) {
                                     uiState.fileName.replace(Regex("[^A-Za-z0-9_-]"), "_")
                                 } else {
                                     "page_${index + 1}_${System.currentTimeMillis()}"
                                 }
                                 val displayName = "${baseName}_page${index + 1}.$ext"
+
+                                // DPI metadata can only be written into a real file on disk
+                                // (ExifInterface edits in place), so route through a scratch
+                                // file before handing the final bytes off to be saved.
+                                uiState.dpi?.let { dpi ->
+                                    val scratchFile = File(scratchDir, displayName)
+                                    scratchFile.writeBytes(bytes)
+                                    exportEngine.writeDpi(scratchFile, dpi)
+                                    bytes = scratchFile.readBytes()
+                                    scratchFile.delete()
+                                }
+
                                 PublicDocumentSaver.saveToDocuments(
                                     context = applicationContext,
                                     bytes = bytes,
