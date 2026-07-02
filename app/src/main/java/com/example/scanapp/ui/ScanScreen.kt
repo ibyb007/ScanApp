@@ -8,8 +8,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -170,6 +172,7 @@ fun ScanScreen(
                     .padding(padding)
                     .padding(16.dp)
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
             ) {
                 Button(onClick = onScanClick, modifier = Modifier.fillMaxWidth()) {
                     Text(if (scannedPages.isEmpty()) "Scan Document" else "Scan More Pages")
@@ -271,6 +274,26 @@ fun ScanScreen(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                             modifier = Modifier.width(140.dp)
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        val estWidth = widthText.toIntOrNull() ?: 0
+                        val estHeight = heightText.toIntOrNull() ?: 0
+                        val estimatedBytes = estimateImageBytes(estWidth, estHeight, uiState.format, uiState.quality)
+                        Text(
+                            buildString {
+                                append("Estimated size: ~${formatByteSize(estimatedBytes)}")
+                                if (uiState.format != OutputFormat.PNG) append(" at quality ${uiState.quality}")
+                                if (useSizeLimit) append(" — capped to your size limit below on export")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "DPI is print-density metadata only — it doesn't change file size.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
@@ -451,4 +474,28 @@ private fun SegmentedUnitToggle(selected: SizeUnit, onSelect: (SizeUnit) -> Unit
 @Composable
 private fun SegmentedButtonOption(label: String, selected: Boolean, onClick: () -> Unit) {
     FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
+}
+
+/**
+ * Rough, content-independent estimate of output file size — real compressed size
+ * always depends on how busy/detailed the actual scan is, so this is only a guide
+ * for the UI, not a guarantee.
+ */
+private fun estimateImageBytes(width: Int, height: Int, format: OutputFormat, quality: Int): Long {
+    if (width <= 0 || height <= 0) return 0L
+    val pixels = width.toLong() * height.toLong()
+    val bitsPerPixel = if (format == OutputFormat.PNG) {
+        // PNG is lossless; scanned documents (mostly flat white + text) compress well in practice.
+        2.5
+    } else {
+        // JPEG: bits/pixel grows non-linearly with quality.
+        0.1 + Math.pow(quality / 100.0, 1.5) * 2.9
+    }
+    return (pixels * bitsPerPixel / 8.0).toLong()
+}
+
+private fun formatByteSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.2f MB".format(bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> "%.0f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
 }
