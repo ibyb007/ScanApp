@@ -103,6 +103,11 @@ class MainActivity : ComponentActivity() {
     private var pendingRestorePassword: String = ""
     private lateinit var importTelegramCredsLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
     private var pendingImportCredsPassword: String = ""
+    private lateinit var driveAuthResolutionLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>
+    // Holds whichever Drive backup/restore action is waiting on the user to
+    // finish the account-picker/consent screen; invoked with the resulting
+    // access token once driveAuthResolutionLauncher's callback fires.
+    private var pendingGoogleDriveAction: ((accessToken: String) -> Unit)? = null
     private val exportEngine by lazy { ExportEngine(applicationContext) }
     private lateinit var repository: DocumentRepository
 
@@ -201,6 +206,39 @@ class MainActivity : ComponentActivity() {
             if (uri != null) {
                 runImportTelegramCredentials(uri, pendingImportCredsPassword)
             } else {
+                isBackupActive = false
+            }
+        }
+
+        // Resumes whichever Drive action (backup/restore) triggered the
+        // authorization request, once the account-picker/consent screen
+        // Google Play services shows on top of us finishes. Not needed on
+        // the (common) path where the user already granted Drive access in
+        // a previous session — AuthorizationClient returns a token directly
+        // in that case, with no UI and no launcher involved.
+        driveAuthResolutionLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+        ) { activityResult ->
+            val resumeWithToken = pendingGoogleDriveAction
+            pendingGoogleDriveAction = null
+            if (activityResult.resultCode != RESULT_OK) {
+                backupStatusMessage = "Google Drive sign-in was cancelled"
+                isBackupActive = false
+                return@registerForActivityResult
+            }
+            try {
+                val authorizationResult = com.google.android.gms.auth.api.identity.Identity
+                    .getAuthorizationClient(this)
+                    .getAuthorizationResultFromIntent(activityResult.data)
+                val token = authorizationResult.accessToken
+                if (token != null && resumeWithToken != null) {
+                    resumeWithToken(token)
+                } else {
+                    backupStatusMessage = "Google Drive authorization did not return an access token"
+                    isBackupActive = false
+                }
+            } catch (e: com.google.android.gms.common.api.ApiException) {
+                backupStatusMessage = "Google Drive authorization failed: ${e.message}"
                 isBackupActive = false
             }
         }
@@ -343,6 +381,8 @@ class MainActivity : ComponentActivity() {
                         onLocalRestore = { password -> runLocalRestore(password) },
                         onTelegramSync = { token, chatId, password -> runTelegramSync(token, chatId, password) },
                         onTelegramRestore = { token, password -> runTelegramRestore(token, password) },
+                        onGoogleDriveBackup = { password -> runGoogleDriveBackup(password) },
+                        onGoogleDriveRestore = { password -> runGoogleDriveRestore(password) },
                         onSaveTelegramCredentials = { token, chatId ->
                             com.example.scanapp.backup.BackupEngine.saveTelegramCredentials(applicationContext, token, chatId)
                         },
@@ -876,6 +916,126 @@ class MainActivity : ComponentActivity() {
                 withContext(Dispatchers.Main) {
                     isBackupActive = false
                     telegramActivity = com.example.scanapp.ui.TelegramActivityState.NONE
+                }
+            }
+        }
+    }
+
+    /**
+     * Requests a Drive access token scoped to just this app's hidden
+     * appDataFolder, then invokes [onAuthorized] with it. If the user
+     * already granted this scope in a previous session, Play services
+     * returns the token immediately with no UI. Otherwise it shows an
+     * account picker / consent screen, and [onAuthorized] resumes from
+     * driveAuthResolutionLauncher's callback once that finishes.
+     *
+     * Callers are responsible for having already set isBackupActive = true;
+     * this function resets it back to false on every failure/cancellation
+     * path so the UI doesn't get stuck "processing" forever. On success,
+     * resetting it is [onAuthorized]'s job (matching the pattern every
+     * other run*() function here already follows).
+     */
+    private fun withGoogleDriveAuthorization(onAuthorized: (accessToken: String) -> Unit) {
+        // drive.appdata is a non-sensitive scope limited to this app's own
+        // hidden storage folder — it can't see or touch anything else in
+        // the user's Drive. Written out as a literal rather than pulling in
+        // google-api-services-drive just for the DriveScopes constant.
+        val driveAppDataScope = com.google.android.gms.common.api.Scope(
+            "https://www.googleapis.com/auth/drive.appdata"
+        )
+        val request = com.google.android.gms.auth.api.identity.AuthorizationRequest.builder()
+            .setRequestedScopes(listOf(driveAppDataScope))
+            .build()
+
+        com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(this)
+            .authorize(request)
+            .addOnSuccessListener { authorizationResult ->
+                if (authorizationResult.hasResolution()) {
+                    pendingGoogleDriveAction = onAuthorized
+                    val pendingIntent = authorizationResult.pendingIntent
+                    try {
+                        driveAuthResolutionLauncher.launch(
+                            androidx.activity.result.IntentSenderRequest.Builder(
+                                pendingIntent!!.intentSender
+                            ).build()
+                        )
+                    } catch (e: android.content.IntentSender.SendIntentException) {
+                        backupStatusMessage = "Could not open Google sign-in: ${e.message}"
+                        pendingGoogleDriveAction = null
+                        isBackupActive = false
+                    }
+                } else {
+                    val token = authorizationResult.accessToken
+                    if (token != null) {
+                        onAuthorized(token)
+                    } else {
+                        backupStatusMessage = "Google Drive authorization did not return an access token"
+                        isBackupActive = false
+                    }
+                }
+            }
+            .addOnFailureListener { e ->
+                backupStatusMessage = "Google Drive authorization failed: ${e.message}"
+                isBackupActive = false
+            }
+    }
+
+    private fun runGoogleDriveBackup(password: String) {
+        if (isBackupActive) return
+        isBackupActive = true
+        backupStatusMessage = "Requesting Google Drive access..."
+        withGoogleDriveAuthorization { accessToken ->
+            backupStatusMessage = "Syncing backup to Google Drive..."
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    com.example.scanapp.backup.GoogleDriveBackupEngine.uploadBackup(
+                        applicationContext, accessToken, password.ifBlank { null }
+                    )
+                    withContext(Dispatchers.Main) {
+                        backupStatusMessage = "Backup uploaded to Google Drive"
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        backupStatusMessage = "Google Drive backup failed: ${e.message}"
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        isBackupActive = false
+                    }
+                }
+            }
+        }
+    }
+
+    private fun runGoogleDriveRestore(password: String) {
+        if (isBackupActive) return
+        isBackupActive = true
+        backupStatusMessage = "Requesting Google Drive access..."
+        withGoogleDriveAuthorization { accessToken ->
+            backupStatusMessage = "Downloading backup from Google Drive..."
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    com.example.scanapp.backup.GoogleDriveBackupEngine.downloadAndRestoreBackup(
+                        applicationContext, accessToken, password.ifBlank { null }
+                    )
+                    // Same reasoning as the local/Telegram restore paths:
+                    // rebuild the Room connection so the UI doesn't observe
+                    // stale/merged state.
+                    repository = DocumentRepository(applicationContext)
+                    withContext(Dispatchers.Main) {
+                        backupStatusMessage = "Google Drive restore complete"
+                        openDocumentId = null
+                        currentScreen = Screen.HOME
+                    }
+                    observeLibrary()
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        backupStatusMessage = "Google Drive restore failed: ${e.message}"
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        isBackupActive = false
+                    }
                 }
             }
         }
