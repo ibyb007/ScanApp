@@ -104,6 +104,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var importTelegramCredsLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
     private var pendingImportCredsPassword: String = ""
     private lateinit var driveAuthResolutionLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>
+    // Launches the system package installer for the auto-downloaded update
+    // APK and hands control back (regardless of whether the person actually
+    // completed or cancelled the install) so the cached APK can be cleaned
+    // up afterward — see deleteUpdateApkCache().
+    private lateinit var apkInstallLauncher: androidx.activity.result.ActivityResultLauncher<Intent>
     // Holds whichever Drive backup/restore action is waiting on the user to
     // finish the account-picker/consent screen; invoked with the resulting
     // access token once driveAuthResolutionLauncher's callback fires.
@@ -241,6 +246,20 @@ class MainActivity : ComponentActivity() {
                 backupStatusMessage = "Google Drive authorization failed: ${e.message}"
                 isBackupActive = false
             }
+        }
+
+        apkInstallLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+        ) {
+            // Fires once the package installer UI hands control back to us —
+            // whether the person completed the install, cancelled it, or it
+            // failed. Either way this app's cached copy in
+            // cacheDir/update_apk is no longer needed: a completed install
+            // means it's redundant, and a cancelled/failed one means the
+            // person still has the current version and can just tap "Check
+            // for update" again later, which re-downloads fresh rather than
+            // reusing a possibly-stale cached APK.
+            deleteUpdateApkCache()
         }
 
         observeLibrary()
@@ -429,7 +448,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             ) {
-                                Text(if (latestApkDownloadUrl != null) "Update now" else "View release")
+                                Text(if (latestApkDownloadUrl != null) "Update" else "View release")
                             }
                         },
                         dismissButton = {
@@ -1113,9 +1132,16 @@ class MainActivity : ComponentActivity() {
         val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        startActivity(installIntent)
+        // Launched for a result (rather than startActivity) purely so
+        // apkInstallLauncher's callback fires when the installer hands
+        // control back, which is what triggers deleteUpdateApkCache().
+        apkInstallLauncher.launch(installIntent)
+    }
+
+    /** Deletes the update_apk cache subfolder created by UpdateApkDownloader. */
+    private fun deleteUpdateApkCache() {
+        File(cacheDir, "update_apk").deleteRecursively()
     }
 
     private fun shareDocument(documentId: Long, title: String, format: OutputFormat) {
