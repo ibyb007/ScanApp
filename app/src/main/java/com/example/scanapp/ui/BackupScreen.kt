@@ -86,6 +86,8 @@ fun BackupScreen(
     onLocalRestore: (password: String) -> Unit,
     onTelegramSync: (token: String, chat: String, pass: String) -> Unit,
     onTelegramRestore: (token: String, pass: String) -> Unit,
+    onGoogleDriveBackup: (password: String) -> Unit = {},
+    onGoogleDriveRestore: (password: String) -> Unit = {},
     onSaveTelegramCredentials: (token: String, chat: String) -> Unit = { _, _ -> },
     onExportTelegramCredentials: (password: String) -> Unit = {},
     onImportTelegramCredentials: (password: String) -> Unit = {},
@@ -194,6 +196,38 @@ fun BackupScreen(
                     }
                     OutlinedButton(
                         onClick = { onLocalRestore(password) },
+                        enabled = !isProcessing,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Restore")
+                    }
+                }
+            }
+        }
+
+        // Google Drive Sync Area Card
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Google Drive Sync", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    "Stored in your Drive account's hidden app-data area — not visible in the " +
+                        "regular Drive app, and only ScanApp can read it. Uses your Google sign-in, " +
+                        "no separate account setup needed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { onGoogleDriveBackup(password) }, enabled = !isProcessing, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Filled.CloudUpload, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Backup")
+                    }
+                    OutlinedButton(
+                        onClick = { onGoogleDriveRestore(password) },
                         enabled = !isProcessing,
                         modifier = Modifier.weight(1f)
                     ) {

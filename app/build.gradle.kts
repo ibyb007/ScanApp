@@ -121,6 +121,15 @@ dependencies {
     // ML Kit Document Scanner (the Google Drive-style scan UI)
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
 
+    // Google Identity Services' AuthorizationClient — used to obtain a
+    // short-lived Drive access token for the Google Drive backup/restore
+    // feature (see MainActivity's withGoogleDriveAuthorization and
+    // backup/GoogleDriveBackupEngine.kt). Deliberately NOT pulling in
+    // google-api-client / google-api-services-drive: those add a large
+    // transitive dependency tree (Guava, Jackson, Gson, Apache HttpClient)
+    // for what this app only needs three raw REST calls to do.
+    implementation("com.google.android.gms:play-services-auth:21.6.0")
+
     // For coroutines (compression runs off the main thread)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
