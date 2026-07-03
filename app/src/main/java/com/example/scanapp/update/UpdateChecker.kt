@@ -2,6 +2,7 @@ package com.example.scanapp.update
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -25,10 +26,14 @@ sealed class UpdateCheckResult {
  * Checks GitHub's Releases API for the latest published release tag and
  * compares it against the app's current versionName.
  *
- * Uses plain HttpURLConnection + a tiny hand-rolled extraction of "tag_name"
- * rather than pulling in a JSON library or networking dependency for a single
- * field — GitHub's response is predictable enough that a direct string scan
- * is reliable and keeps this dependency-free.
+ * Parses the response with org.json (built into Android — no extra
+ * dependency to add) rather than hand-rolled regex scanning. An earlier
+ * version scanned the raw JSON text directly to avoid a JSON library, but
+ * that approach silently failed to find the .apk asset's
+ * browser_download_url in real-world responses (it relied on the asset's
+ * fields staying within a fixed-size text window, which is exactly the kind
+ * of assumption a real parser doesn't need to make). A real parser is both
+ * more reliable and barely more code.
  */
 object UpdateChecker {
 
@@ -57,7 +62,13 @@ object UpdateChecker {
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             connection.disconnect()
 
-            val latestTag = extractJsonStringField(body, "tag_name")
+            val release = try {
+                JSONObject(body)
+            } catch (e: Exception) {
+                return@withContext UpdateCheckResult.Error("Couldn't read release info")
+            }
+
+            val latestTag = release.optString("tag_name").ifBlank { null }
                 ?: return@withContext UpdateCheckResult.Error("Couldn't read release info")
 
             val latestVersion = latestTag.removePrefix("v").removePrefix("V")
@@ -68,7 +79,7 @@ object UpdateChecker {
                     currentVersion = currentVersionName,
                     latestVersion = latestTag,
                     releaseUrl = RELEASES_PAGE_URL,
-                    apkDownloadUrl = extractApkAssetUrl(body)
+                    apkDownloadUrl = extractApkAssetUrl(release)
                 )
             } else {
                 UpdateCheckResult.UpToDate(currentVersionName)
@@ -78,39 +89,28 @@ object UpdateChecker {
         }
     }
 
-    /** Minimal extraction of a top-level string field from a JSON object, without a JSON library. */
-    private fun extractJsonStringField(json: String, field: String): String? {
-        val regex = Regex("\"$field\"\\s*:\\s*\"([^\"]*)\"")
-        return regex.find(json)?.groupValues?.getOrNull(1)
-    }
-
     /**
-     * Finds the .apk asset's browser_download_url inside the release JSON's
-     * "assets" array, without a full JSON parser.
-     *
-     * GitHub's confirmed field order per asset is: url, browser_download_url,
-     * id, node_id, name, label, ... — i.e. browser_download_url always comes
-     * BEFORE name within the same asset object. So once the ".apk" name
-     * match is found, this looks specifically *backward* from it for the
-     * nearest browser_download_url, within a bounded window — wide enough to
-     * cover the few fields between them (well under 250 chars even with long
-     * URLs), but short enough that it won't reach back across a "}," asset
-     * boundary into the *previous* sibling asset's browser_download_url.
+     * Finds the .apk asset's browser_download_url in the release's "assets"
+     * array. Prefers a name containing "universal" (matches this project's
+     * single-APK build, and mirrors how multi-ABI projects like Vega app
+     * pick their APK), falling back to the first ".apk" asset found —
+     * ScanApp's CI only ever uploads one, so that fallback is normally what
+     * fires.
      */
-    private fun extractApkAssetUrl(json: String): String? {
-        val nameMatch = Regex("\"name\"\\s*:\\s*\"([^\"]*\\.apk)\"", RegexOption.IGNORE_CASE).find(json)
-            ?: return null
+    private fun extractApkAssetUrl(release: JSONObject): String? {
+        val assets = release.optJSONArray("assets") ?: return null
 
-        val windowRadius = 250
-        val windowStart = (nameMatch.range.first - windowRadius).coerceAtLeast(0)
-        val window = json.substring(windowStart, nameMatch.range.first)
+        var firstApkUrl: String? = null
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val name = asset.optString("name")
+            if (!name.endsWith(".apk", ignoreCase = true)) continue
 
-        // findAll + lastOrNull rather than find, so if the window happens to
-        // contain more than one browser_download_url (e.g. window reaches
-        // slightly past an asset boundary), the one closest to this specific
-        // "name" match wins — that's the one actually inside this asset's object.
-        val urlPattern = Regex("\"browser_download_url\"\\s*:\\s*\"([^\"]*)\"")
-        return urlPattern.findAll(window).lastOrNull()?.groupValues?.getOrNull(1)
+            val url = asset.optString("browser_download_url").ifBlank { null } ?: continue
+            if (firstApkUrl == null) firstApkUrl = url
+            if (name.contains("universal", ignoreCase = true)) return url
+        }
+        return firstApkUrl
     }
 
     /** Compares dot-separated numeric version strings, e.g. "1.10.2" > "1.9.0". */
