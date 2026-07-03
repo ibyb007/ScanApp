@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,7 +48,7 @@ data class ExportUiState(
     val customWidth: Int? = null,   // null = keep the scanned page's original width
     val customHeight: Int? = null,  // null = keep the scanned page's original height
     val dpi: Int? = null,           // null = don't override DPI metadata
-    val compressionStrategy: CompressionStrategy = CompressionStrategy.BALANCED
+    val compressionStrategy: CompressionStrategy = CompressionStrategy.PRESERVE_QUALITY
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -211,6 +212,22 @@ fun ScanScreen(
                         }
                     }
                 )
+            },
+            floatingActionButton = {
+                if (scannedPages.isNotEmpty()) {
+                    ExtendedFloatingActionButton(
+                        onClick = { if (!isExporting) onExportClick(uiState) },
+                        icon = {
+                            if (isExporting) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Filled.IosShare, contentDescription = null)
+                            }
+                        },
+                        text = { Text(if (isExporting) "Exporting…" else "Export") },
+                        expanded = !isExporting
+                    )
+                }
             }
         ) { padding ->
             Column(
