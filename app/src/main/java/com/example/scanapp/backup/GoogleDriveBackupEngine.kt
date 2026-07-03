@@ -94,7 +94,13 @@ object GoogleDriveBackupEngine {
     private fun findBackupFileId(accessToken: String): String? {
         val q = URLEncoder.encode("name = '$BACKUP_FILENAME' and trashed = false", "UTF-8")
         val fields = URLEncoder.encode("files(id)", "UTF-8")
-        val url = URL("$FILES_ENDPOINT?spaces=appDataFolder&q=$q&fields=$fields")
+        // orderBy + pageSize=1: if any duplicate backup files exist from
+        // before this parsing bug was fixed, always resolve to the newest
+        // one rather than whichever Drive happens to list first.
+        val url = URL(
+            "$FILES_ENDPOINT?spaces=appDataFolder&q=$q&fields=$fields" +
+                "&orderBy=modifiedTime%20desc&pageSize=1&prettyPrint=false"
+        )
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             setRequestProperty("Authorization", "Bearer $accessToken")
@@ -110,8 +116,12 @@ object GoogleDriveBackupEngine {
         val response = connection.inputStream.bufferedReader().use { it.readText() }
         // Manual JSON parsing to avoid pulling in a JSON library just for
         // this one field — same approach BackupEngine already uses to pull
-        // message_id/file_id out of Telegram's responses.
-        val filesStart = response.indexOf("\"files\":[")
+        // message_id/file_id out of Telegram's responses. Deliberately
+        // searches for "files" alone (not "files":[") so this still works
+        // regardless of whitespace between the key, colon, and bracket —
+        // if the array is empty there's no "id" key to find afterwards
+        // anyway, so this naturally returns null in that case too.
+        val filesStart = response.indexOf("\"files\"")
         if (filesStart == -1) return null
         val idMarker = "\"id\":"
         val idStart = response.indexOf(idMarker, filesStart)
