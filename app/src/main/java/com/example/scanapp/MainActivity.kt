@@ -135,6 +135,7 @@ class MainActivity : ComponentActivity() {
     private var exportResultText by mutableStateOf<String?>(null)
     private var isImportingPdf by mutableStateOf(false)
     private var pdfImportError by mutableStateOf<String?>(null)
+    private var pdfImportProgressText by mutableStateOf<String?>(null)
     private var recentDocuments by mutableStateOf<List<RecentDocument>>(emptyList())
     private var homeSearchQuery by mutableStateOf("")
     private var homeSortBy by mutableStateOf(DocumentSortBy.DATE_MODIFIED)
@@ -206,10 +207,10 @@ class MainActivity : ComponentActivity() {
         )
 
         pdfImportLauncher = registerForActivityResult(
-            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri != null) {
-                onPdfPicked(uri)
+            androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
+        ) { uris ->
+            if (uris.isNotEmpty()) {
+                onPdfsPicked(uris)
             }
         }
 
@@ -314,6 +315,7 @@ class MainActivity : ComponentActivity() {
                         onImportPdfClick = { pdfImportLauncher.launch(arrayOf("application/pdf")) },
                         isImportingPdf = isImportingPdf,
                         pdfImportError = pdfImportError,
+                        pdfImportProgressText = pdfImportProgressText,
                         onDocumentClick = { doc -> openDocumentDetail(doc) },
                         onRename = { doc, newTitle -> renameDocument(doc, newTitle) },
                         onDelete = { doc -> deleteDocument(doc) },
@@ -562,32 +564,70 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun onPdfPicked(uri: Uri) {
+    private fun onPdfsPicked(uris: List<Uri>) {
         if (isImportingPdf) return
         isImportingPdf = true
         pdfImportError = null
+        pdfImportProgressText = null
 
         lifecycleScope.launch {
+            var lastDocumentId: Long? = null
+            val failures = mutableListOf<String>()
+
             try {
-                val pageUris = withContext(Dispatchers.IO) {
-                    com.example.scanapp.scan.PdfImporter.importPagesAsJpegs(this@MainActivity, uri)
+                uris.forEachIndexed { fileIndex, uri ->
+                    val filePrefix = if (uris.size > 1) "File ${fileIndex + 1} of ${uris.size} — " else ""
+                    pdfImportProgressText = "${filePrefix}Opening…"
+
+                    try {
+                        val pageUris = withContext(Dispatchers.IO) {
+                            com.example.scanapp.scan.PdfImporter.importPagesAsJpegs(
+                                this@MainActivity,
+                                uri
+                            ) { pageNumber, pageCount ->
+                                // PdfRenderer callbacks run on the calling (IO) thread, so hop
+                                // back to Main to touch Compose state safely.
+                                lifecycleScope.launch(Dispatchers.Main) {
+                                    pdfImportProgressText = "${filePrefix}Rendering page $pageNumber of $pageCount"
+                                }
+                            }
+                        }
+
+                        pdfImportProgressText = "${filePrefix}Saving…"
+
+                        val title = pdfDisplayNameOrNull(uri)
+                            ?: "Imported PDF ${SimpleDateFormat("MM-dd-yyyy HH.mm", Locale.getDefault()).format(Date())}"
+
+                        val documentId = repository.saveNewDocument(pageUris, title)
+                        repository.touchAccessed(documentId)
+                        lastDocumentId = documentId
+                    } catch (e: Exception) {
+                        failures += pdfDisplayNameOrNull(uri) ?: "PDF ${fileIndex + 1}"
+                    } finally {
+                        withContext(Dispatchers.IO) {
+                            com.example.scanapp.scan.PdfImporter.cleanupScratchFiles(this@MainActivity)
+                        }
+                    }
                 }
 
-                val title = pdfDisplayNameOrNull(uri)
-                    ?: "Imported PDF ${SimpleDateFormat("MM-dd-yyyy HH.mm", Locale.getDefault()).format(Date())}"
+                if (failures.isNotEmpty()) {
+                    pdfImportError = if (failures.size == uris.size) {
+                        "PDF import failed for all ${uris.size} file(s)"
+                    } else {
+                        "Failed to import: ${failures.joinToString(", ")}"
+                    }
+                }
 
-                val documentId = repository.saveNewDocument(pageUris, title)
-                repository.touchAccessed(documentId)
-                openDocumentId = documentId
-                refreshOpenDocument(documentId)
-                currentScreen = Screen.DETAIL
-            } catch (e: Exception) {
-                pdfImportError = "PDF import failed: ${e.message}"
+                // Jump into the last successfully imported document, same as the
+                // single-file flow did — if everything failed there's nothing to open.
+                lastDocumentId?.let { documentId ->
+                    openDocumentId = documentId
+                    refreshOpenDocument(documentId)
+                    currentScreen = Screen.DETAIL
+                }
             } finally {
                 isImportingPdf = false
-                withContext(Dispatchers.IO) {
-                    com.example.scanapp.scan.PdfImporter.cleanupScratchFiles(this@MainActivity)
-                }
+                pdfImportProgressText = null
             }
         }
     }
