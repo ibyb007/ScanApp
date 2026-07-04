@@ -181,9 +181,9 @@ fun HomeScreen(
                         },
                         singleLine = true,
                         shape = RoundedCornerShape(24.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
                     )
                 } else {
                     Text(
