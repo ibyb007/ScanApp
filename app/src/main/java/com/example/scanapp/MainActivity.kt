@@ -109,12 +109,19 @@ class MainActivity : ComponentActivity() {
     private var pendingRestorePassword: String = ""
     private lateinit var importTelegramCredsLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
     private var pendingImportCredsPassword: String = ""
+    // Set right before sending the person to the "allow install from this
+    // source" Settings screen, and read again when they come back — lets us
+    // resume the install with the APK already sitting in cache instead of
+    // re-downloading it.
+    private var pendingInstallApkUri: Uri? = null
+
     private lateinit var driveAuthResolutionLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>
     // Launches the system package installer for the auto-downloaded update
     // APK and hands control back (regardless of whether the person actually
     // completed or cancelled the install) so the cached APK can be cleaned
     // up afterward — see deleteUpdateApkCache().
     private lateinit var apkInstallLauncher: androidx.activity.result.ActivityResultLauncher<Intent>
+    private lateinit var installPermissionSettingsLauncher: androidx.activity.result.ActivityResultLauncher<Intent>
     // Holds whichever Drive backup/restore action is waiting on the user to
     // finish the account-picker/consent screen; invoked with the resulting
     // access token once driveAuthResolutionLauncher's callback fires.
@@ -271,6 +278,18 @@ class MainActivity : ComponentActivity() {
             // for update" again later, which re-downloads fresh rather than
             // reusing a possibly-stale cached APK.
             deleteUpdateApkCache()
+        }
+
+        installPermissionSettingsLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+        ) {
+            // Fires when the person returns from the "allow install from
+            // this source" Settings screen. Re-run launchApkInstall with the
+            // same cached APK: if they granted the permission it proceeds
+            // straight to the install prompt (no re-download needed); if
+            // they didn't, it just sends them back to that same Settings
+            // screen rather than silently doing nothing.
+            pendingInstallApkUri?.let { launchApkInstall(it) }
         }
 
         observeLibrary()
@@ -1170,12 +1189,14 @@ class MainActivity : ComponentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()
         ) {
-            startActivity(
+            pendingInstallApkUri = apkUri
+            installPermissionSettingsLauncher.launch(
                 Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:$packageName".toUri())
             )
             return
         }
 
+        pendingInstallApkUri = null
         val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
