@@ -33,6 +33,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Relaunches the app right after a self-update finishes installing —
+             see UpdateInstalledReceiver for why this exists instead of relying
+             on the system installer's own "Open" button. Not exported: this
+             broadcast is only ever sent by the system, only to this app. -->
+        <receiver
+            android:name=".update.UpdateInstalledReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Needed if/when you add "Share" for exported files -->
         <provider
             android:name="androidx.core.content.FileProvider"
