@@ -9,13 +9,19 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
@@ -137,6 +143,11 @@ class MainActivity : ComponentActivity() {
     private var showUpdateAvailableDialog by mutableStateOf(false)
     private var startupUpdateVersion by mutableStateOf("")
     private var isDownloadingUpdate by mutableStateOf(false)
+    private var updateDownloadedBytes by mutableStateOf(0L)
+    // -1 means "unknown total" (server didn't send Content-Length) — the
+    // dialog falls back to an indeterminate spinner plus a bytes-downloaded
+    // count in that case, since there's nothing to compute a percentage against.
+    private var updateTotalBytes by mutableStateOf(-1L)
     private var updateDownloadError by mutableStateOf<String?>(null)
 
     private var exportUiState by mutableStateOf(ExportUiState())
@@ -421,11 +432,32 @@ class MainActivity : ComponentActivity() {
                         title = { Text("Update available") },
                         text = {
                             Column {
-                                Text(
-                                    "Version $startupUpdateVersion is available." +
-                                        if (isDownloadingUpdate) "\n\nDownloading…" else ""
-                                )
+                                Text("Version $startupUpdateVersion is available.")
+                                if (isDownloadingUpdate) {
+                                    Spacer(Modifier.height(12.dp))
+                                    val total = updateTotalBytes
+                                    if (total > 0) {
+                                        val progress = (updateDownloadedBytes.toFloat() / total.toFloat())
+                                            .coerceIn(0f, 1f)
+                                        LinearProgressIndicator(
+                                            progress = { progress },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            "${formatUpdateBytes(updateDownloadedBytes)} / " +
+                                                "${formatUpdateBytes(total)}  (${(progress * 100).toInt()}%)"
+                                        )
+                                    } else {
+                                        // No Content-Length from the server — show an
+                                        // indeterminate bar rather than a fake percentage.
+                                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                        Spacer(Modifier.height(4.dp))
+                                        Text("Downloading… ${formatUpdateBytes(updateDownloadedBytes)}")
+                                    }
+                                }
                                 updateDownloadError?.let { error ->
+                                    Spacer(Modifier.height(8.dp))
                                     Text(
                                         "Download failed: $error",
                                         color = MaterialTheme.colorScheme.error
@@ -798,11 +830,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Formats a byte count as e.g. "12.3 MB" for the download-progress dialog. */
+    private fun formatUpdateBytes(bytes: Long): String {
+        val mb = bytes / (1024.0 * 1024.0)
+        return "%.1f MB".format(mb)
+    }
+
     private fun downloadAndLaunchInstall(apkUrl: String) {
         lifecycleScope.launch {
             isDownloadingUpdate = true
             updateDownloadError = null
-            val result = com.example.scanapp.update.UpdateApkDownloader.download(applicationContext, apkUrl)
+            updateDownloadedBytes = 0L
+            updateTotalBytes = -1L
+            val result = com.example.scanapp.update.UpdateApkDownloader.download(
+                context = applicationContext,
+                apkUrl = apkUrl,
+                onProgress = { downloaded, total ->
+                    updateDownloadedBytes = downloaded
+                    updateTotalBytes = total
+                }
+            )
             isDownloadingUpdate = false
             when (result) {
                 is com.example.scanapp.update.ApkDownloadResult.Success -> {
