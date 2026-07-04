@@ -35,7 +35,11 @@ object UpdateApkDownloader {
 
     private const val APK_CACHE_FILENAME = "update.apk"
 
-    suspend fun download(context: Context, apkUrl: String): ApkDownloadResult = withContext(Dispatchers.IO) {
+    suspend fun download(
+        context: Context,
+        apkUrl: String,
+        onProgress: (bytesDownloaded: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): ApkDownloadResult = withContext(Dispatchers.IO) {
         try {
             val connection = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -50,6 +54,11 @@ object UpdateApkDownloader {
                 return@withContext ApkDownloadResult.Error("Download failed (HTTP $responseCode)")
             }
 
+            // -1 when the server doesn't send Content-Length; the caller
+            // treats that as "unknown total" and shows an indeterminate
+            // progress bar instead of a percentage.
+            val totalBytes = connection.contentLengthLong
+
             // updateApkDir: a dedicated subfolder of cache, matching the
             // pattern already used for share_scratch in file_paths.xml,
             // rather than dropping update.apk directly into the root cache
@@ -60,7 +69,28 @@ object UpdateApkDownloader {
 
             connection.inputStream.use { input ->
                 apkFile.outputStream().use { output ->
-                    input.copyTo(output)
+                    val buffer = ByteArray(8 * 1024)
+                    var bytesCopied = 0L
+                    // Throttled to ~10 updates/sec rather than firing
+                    // onProgress on every 8KB chunk — that would trigger far
+                    // more Compose recompositions than a progress bar needs
+                    // and adds needless overhead on a fast connection.
+                    var lastReportAt = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        bytesCopied += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastReportAt >= 100) {
+                            onProgress(bytesCopied, totalBytes)
+                            lastReportAt = now
+                        }
+                    }
+                    // Final call to guarantee the last chunk (and 100%, when
+                    // totalBytes is known) actually reaches the UI even if it
+                    // landed inside the last throttle window.
+                    onProgress(bytesCopied, totalBytes)
                 }
             }
             connection.disconnect()
