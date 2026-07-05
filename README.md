@@ -1,11 +1,84 @@
 # ScanApp
 
 A document scanner app (like Google Drive's scan feature) with customizable
-PDF/image export that targets a specific file size.
+PDF/image export, a photo collage/layout tool, and three different ways to
+back up (and restore) your scans: an encrypted local file, Telegram, and
+Google Drive.
+
+<!-- Add a screenshot or two here — see "Adding screenshots to this README" below. -->
 
 This project is built entirely through **GitHub Actions** — no Android Studio
 required. Every push to `main` triggers a build, and the resulting APK shows
-up as a downloadable artifact.
+up as a downloadable artifact. The app also self-updates: it checks GitHub
+Releases and can download/install new versions on its own.
+
+## What this app does
+
+- **Scan**: Tapping "Scan Document" launches Google's own ML Kit document
+  scanner UI — auto edge detection, crop adjustment, multi-page capture,
+  or import from gallery/PDF.
+- **Library**: Scans are saved as documents (title, thumbnail, page count,
+  date) in a local Room database, with drag-to-reorder pages inside a
+  document's detail view.
+- **Customize export**: Choose PDF, JPEG, or PNG output, then either set a
+  target file size (the app reduces quality and, if needed, resolution to
+  hit it) or just pick a quality percentage directly.
+- **Collage**: Arrange multiple scanned pages/photos into a single laid-out
+  page (A4, A5, Letter, Legal, or Square, portrait or landscape) for export.
+- **Self-update**: Checks GitHub Releases for a newer `versionName` and can
+  download + install the new APK directly from within the app.
+- **Backup & restore** (see below): encrypted local file, Telegram, and
+  Google Drive — pick whichever you're comfortable with, or use more than
+  one.
+
+## Backup & restore
+
+All three backup methods package the same thing — the scan database and all
+saved page images — into a single archive. If you set a passphrase, the
+archive is encrypted (AES-256, PBKDF2-derived key, random salt/IV per
+backup) before it ever leaves the device; without a passphrase it's saved as
+a plain zip. **If you encrypt a backup, remember the passphrase** — it isn't
+stored anywhere, and there's no way to recover the backup without it.
+
+### Encrypted local backup
+
+- **Backup**: Saves the archive to `Download/ScanApp/` on your device, so it
+  survives clearing app data, uninstalling, or a factory reset (unlike the
+  app's private storage, which does not).
+- **Restore**: Pick a previously saved backup file from `Download/ScanApp/`
+  (or anywhere else you've moved it) via the file picker.
+- Use this if you want a backup that never touches the network at all —
+  copy it to a PC, another phone, or cloud storage manually, on your own
+  terms.
+
+### Telegram backup
+
+- Enter a Telegram bot token and a chat/channel ID once in the Backup
+  screen (or Settings) and save them.
+- **Backup**: Uploads the (optionally encrypted) archive to that chat as a
+  document. Only the latest backup is kept — uploading a new one deletes
+  the previous backup message automatically, so your chat doesn't fill up
+  with old versions.
+- Backups larger than Telegram's ~20MB Bot API download limit are
+  automatically split into numbered parts on upload and reassembled on
+  restore — you don't need to do anything differently for large libraries.
+- **Restore**: Downloads the most recent backup from that chat and restores
+  it in place.
+- Your bot token and chat ID can also be exported to their own small
+  encrypted file (independent of a full data backup) — handy for moving
+  them to a new phone without having to look up the token again.
+
+### Google Drive backup
+
+- **Backup**: Signs you into Google and uploads the (optionally encrypted)
+  archive to your Drive's hidden **app data** folder — the same private,
+  per-app storage area Drive itself uses, which never shows up in your
+  normal Drive file list and nothing else can read. Only one backup file is
+  kept; each backup overwrites the last.
+- **Restore**: Downloads that file from your Drive app data folder and
+  restores it in place.
+- Use this if you want backups to happen without keeping track of a bot
+  token, and you're fine with them living in your Google account.
 
 ## One-time setup
 
@@ -49,6 +122,13 @@ up as a downloadable artifact.
    you use to open it — standard sideloading, same as installing Magisk
    modules outside the Play Store.
 
+7. **(Optional) Set up Telegram or Google Drive backup.**
+   - Telegram: create a bot via [@BotFather](https://t.me/BotFather) to get
+     a bot token, and get the chat/channel ID you want backups sent to.
+     Enter both in the app's Backup screen.
+   - Google Drive: sign in from the app's Backup screen when prompted. No
+     extra setup on your end beyond the Google sign-in flow itself.
+
 ## Making changes
 
 Since there's no live preview here (that's the real cost of skipping Android
@@ -72,34 +152,75 @@ ScanApp/
 ├── gradle.properties             # Gradle/AndroidX settings
 ├── .github/workflows/build.yml   # the CI pipeline — builds + uploads APK
 └── app/
-    ├── build.gradle.kts          # app-level dependencies (ML Kit, Compose, Coil)
+    ├── build.gradle.kts          # app-level dependencies (ML Kit, Compose, Coil, Room)
     └── src/main/
         ├── AndroidManifest.xml
         ├── res/xml/file_paths.xml
         └── java/com/example/scanapp/
-            ├── MainActivity.kt           # wires everything together
-            ├── scan/DocumentScannerLauncher.kt   # launches ML Kit's scan UI
-            ├── export/ExportEngine.kt            # compression-to-target-size logic
-            └── ui/ScanScreen.kt                  # Compose UI (format/size controls)
+            ├── MainActivity.kt                     # wires everything together
+            ├── scan/DocumentScannerLauncher.kt      # launches ML Kit's scan UI
+            ├── scan/PdfImporter.kt                  # importing existing PDFs as pages
+            ├── scan/TempGalleryExport.kt            # re-opening a saved page in ML Kit's editor
+            ├── export/ExportEngine.kt               # compression-to-target-size logic
+            ├── export/JpegPdfWriter.kt              # PDF assembly from page images
+            ├── export/PublicDocumentSaver.kt        # saving exports to public storage
+            ├── collage/CollageEngine.kt             # multi-page layout/collage rendering
+            ├── edit/BitmapEditOps.kt                # rotate/filter/enhance bitmap utilities
+            ├── data/                                # Room database, DAO, repository
+            ├── backup/BackupEngine.kt                # local + Telegram backup/restore, encryption
+            ├── backup/GoogleDriveBackupEngine.kt     # Google Drive app-data backup/restore
+            ├── update/                               # GitHub Releases self-update checker/installer
+            └── ui/
+                ├── HomeScreen.kt
+                ├── ScanScreen.kt                     # format/size export controls
+                ├── CollageScreen.kt                  # collage layout UI
+                ├── DocumentDetailScreen.kt           # page grid, reorder, per-page actions
+                ├── BackupScreen.kt                   # local/Telegram/Google Drive backup UI
+                └── SettingsScreen.kt
 ```
-
-## What this app does
-
-- **Scan**: Tapping "Scan Document" launches Google's own ML Kit document
-  scanner UI — auto edge detection, crop adjustment, multi-page capture,
-  or import from gallery.
-- **Customize export**: Choose PDF, JPEG, or PNG output, then either set a
-  target file size (the app reduces quality and, if needed, resolution to
-  hit it) or just pick a quality percentage directly.
-- **Export**: Saved to the app's internal storage under `files/exports/`.
 
 ## Known limitations / things to test on a real device
 
-- No "Share" button yet (export saves locally; sharing via
-  WhatsApp/Drive/email intent isn't wired up — ask if you want this added).
+- No "Share" button yet for exported files (a `FileProvider` is already
+  wired up for this, but nothing calls it yet — ask if you want this added).
 - PDF export splits the target size evenly across pages, which is a
   reasonable default but not optimal if pages vary a lot in visual
   complexity.
 - If a target size is set so low that even minimum quality + downscaling
   can't reach it, the app currently just returns its closest attempt rather
   than showing an explicit "couldn't reach target" warning.
+- Each backup method (local/Telegram/Google Drive) keeps only its **most
+  recent** backup — there's no version history, so restoring always gets you
+  the last backup you made with that method.
+
+## Adding screenshots to this README
+
+The simplest way, no git command line needed:
+
+1. Open this `README.md` file on GitHub and click the pencil (✏️) icon to
+   edit it.
+2. Drag your screenshot image directly into the edit box (or click inside
+   the text box and use **Paste**, or use the small image icon in the
+   toolbar above the box to browse for a file).
+3. GitHub uploads the image and automatically inserts a line like:
+   ```markdown
+   ![image](https://github.com/user-attachments/assets/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+   ```
+   at your cursor position. Move that line wherever you want the image to
+   show up in the file.
+4. Commit the change directly to `main`, same as any other edit.
+
+A couple of tips:
+- You can drag in multiple images at once; each gets its own auto-generated
+  line.
+- To control the display size (GitHub's auto-inserted `![image](...)` shows
+  it full width), you can instead write raw HTML:
+  ```html
+  <img src="https://github.com/user-attachments/assets/xxxx..." width="300">
+  ```
+- If you'd rather commit the actual image file into the repo (e.g. into a
+  new `screenshots/` folder) instead of relying on GitHub's attachment CDN,
+  upload it via **"Add file" → "Upload files"** like any other file, then
+  reference it with a relative path: `![Home screen](screenshots/home.png)`.
+  This keeps the image tied to the repo itself rather than a separate
+  attachments URL.
