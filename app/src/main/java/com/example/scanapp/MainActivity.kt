@@ -5,8 +5,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -186,6 +188,21 @@ class MainActivity : ComponentActivity() {
     private lateinit var singlePageScannerLauncher: DocumentScannerLauncher
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Lets our Compose content draw behind the status bar and nav bar
+        // (transparent system bars) instead of Scaffold reserving opaque
+        // space for them. Screens opt back into avoiding overlap with
+        // Modifier.statusBarsPadding()/.navigationBarsPadding() wherever
+        // their content needs to stay clear of the system icons.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            ),
+            navigationBarStyle = SystemBarStyle.auto(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            )
+        )
         super.onCreate(savedInstanceState)
 
         repository = DocumentRepository(applicationContext)
@@ -295,6 +312,20 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val effectiveDarkTheme = darkThemeOverride ?: isSystemInDarkTheme()
+
+            // SystemBarStyle.auto() only picks light/dark icons once, at
+            // launch, based on the system setting — it doesn't react when
+            // the person taps our in-app day/night toggle. Push the update
+            // ourselves whenever effectiveDarkTheme changes so the status
+            // bar clock/icons stay legible against our own theme, not just
+            // the system's.
+            LaunchedEffect(effectiveDarkTheme) {
+                androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !effectiveDarkTheme
+                    isAppearanceLightNavigationBars = !effectiveDarkTheme
+                }
+            }
+
             ScanAppTheme(darkTheme = effectiveDarkTheme) {
                 val themeRevealState = rememberThemeRevealState()
                 val themeRevealLayer = rememberGraphicsLayer()
