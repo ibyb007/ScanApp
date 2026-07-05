@@ -36,6 +36,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
@@ -182,110 +183,34 @@ fun HomeScreen(
             }
         }
     ) { padding ->
-        Column(
+        // A fixed Row above the list (what you had before) can never scroll
+        // behind the status bar — it just sits there, and the list only
+        // ever starts underneath it. To get the Poweramp-style effect, the
+        // list itself has to run the full height of the screen (top edge
+        // included), with the header floating on top of it as a separate,
+        // translucent layer. That way list rows that reach the top actually
+        // pass behind the header and behind the status bar, instead of
+        // stopping short of it.
+        var headerHeightPx by remember { mutableStateOf(0) }
+        val headerHeightDp = with(LocalDensity.current) { headerHeightPx.toDp() }
+
+        Box(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // Keeps the title/icons clear of the status bar's clock
-                    // and battery icons now that the background behind them
-                    // is transparent instead of an opaque bar.
-                    .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (searchExpanded) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = onSearchQueryChange,
-                        placeholder = { Text("Search files") },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        trailingIcon = {
-                            IconButton(onClick = {
-                                onSearchQueryChange("")
-                                searchExpanded = false
-                            }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Close search")
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(24.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier
-                            .weight(1f)
-                    )
-                } else {
-                    Text(
-                        "All files",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = { onToggleDarkModeClick(toggleButtonCenter) },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .onGloballyPositioned { coords ->
-                                val pos = coords.positionInRoot()
-                                toggleButtonCenter = Offset(
-                                    pos.x + coords.size.width / 2f,
-                                    pos.y + coords.size.height / 2f
-                                )
-                            }
-                    ) {
-                        Icon(
-                            if (isDarkTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
-                            contentDescription = if (isDarkTheme) "Switch to day mode" else "Switch to dark mode"
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    IconButton(
-                        onClick = { searchExpanded = true },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search")
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    Box {
-                        IconButton(
-                            onClick = { sortMenuExpanded = true },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort")
-                        }
-                        SortMenu(
-                            expanded = sortMenuExpanded,
-                            sortBy = sortBy,
-                            direction = sortDirection,
-                            onDismiss = { sortMenuExpanded = false },
-                            onSelect = { newSortBy, newDirection ->
-                                sortMenuExpanded = false
-                                onSortChange(newSortBy, newDirection)
-                            }
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    if (recentDocuments.isNotEmpty()) {
-                        TextButton(onClick = {
-                            selectionMode = true
-                            selectedIds = recentDocuments.map { it.id }.toSet()
-                        }) {
-                            Text("Select all")
-                        }
-                    }
-                }
-            }
-
             if (recentDocuments.isEmpty()) {
                 EmptyRecentsState(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = headerHeightDp),
                     isSearching = searchQuery.isNotBlank()
                 )
             } else {
-                LazyColumn(modifier = Modifier.weight(1f)) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = headerHeightDp)
+                ) {
                     items(recentDocuments, key = { it.id }) { doc ->
                         RecentDocumentRow(
                             doc = doc,
@@ -305,6 +230,110 @@ fun HomeScreen(
                             onMoreClick = { actionSheetTarget = doc }
                         )
                         HorizontalDivider(modifier = Modifier.padding(start = 116.dp))
+                    }
+                }
+            }
+
+            // Floating header: translucent so rows scrolling underneath it
+            // (and under the status bar above it) are still faintly visible
+            // through it, the same way Poweramp's track bar sits over the
+            // lyrics rather than pushing them down.
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopStart)
+                    .onGloballyPositioned { headerHeightPx = it.size.height }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // Keeps the title/icons clear of the status bar's
+                        // clock and battery icons now that the space behind
+                        // them is transparent instead of an opaque bar.
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (searchExpanded) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChange,
+                            placeholder = { Text("Search files") },
+                            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(onClick = {
+                                    onSearchQueryChange("")
+                                    searchExpanded = false
+                                }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Close search")
+                                }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(24.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier
+                                .weight(1f)
+                        )
+                    } else {
+                        Text(
+                            "All files",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { onToggleDarkModeClick(toggleButtonCenter) },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .onGloballyPositioned { coords ->
+                                    val pos = coords.positionInRoot()
+                                    toggleButtonCenter = Offset(
+                                        pos.x + coords.size.width / 2f,
+                                        pos.y + coords.size.height / 2f
+                                    )
+                                }
+                        ) {
+                            Icon(
+                                if (isDarkTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                                contentDescription = if (isDarkTheme) "Switch to day mode" else "Switch to dark mode"
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { searchExpanded = true },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Filled.Search, contentDescription = "Search")
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Box {
+                            IconButton(
+                                onClick = { sortMenuExpanded = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort")
+                            }
+                            SortMenu(
+                                expanded = sortMenuExpanded,
+                                sortBy = sortBy,
+                                direction = sortDirection,
+                                onDismiss = { sortMenuExpanded = false },
+                                onSelect = { newSortBy, newDirection ->
+                                    sortMenuExpanded = false
+                                    onSortChange(newSortBy, newDirection)
+                                }
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        if (recentDocuments.isNotEmpty()) {
+                            TextButton(onClick = {
+                                selectionMode = true
+                                selectedIds = recentDocuments.map { it.id }.toSet()
+                            }) {
+                                Text("Select all")
+                            }
+                        }
                     }
                 }
             }
