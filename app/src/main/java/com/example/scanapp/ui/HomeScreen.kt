@@ -111,6 +111,12 @@ fun HomeScreen(
     }
 
     Scaffold(
+        // Stop Scaffold from reserving opaque space for the status bar —
+        // with the Activity now edge-to-edge (see enableEdgeToEdge() in
+        // MainActivity), we handle the status bar inset ourselves below so
+        // our own background can bleed all the way to the top of the screen
+        // instead of stopping at a hard line under the status bar.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             if (selectionMode) {
@@ -184,6 +190,10 @@ fun HomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Keeps the title/icons clear of the status bar's clock
+                    // and battery icons now that the background behind them
+                    // is transparent instead of an opaque bar.
+                    .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
