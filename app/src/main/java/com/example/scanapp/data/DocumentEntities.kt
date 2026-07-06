@@ -22,7 +22,15 @@ data class DocumentEntity(
     val title: String,
     val createdAtMillis: Long,
     val modifiedAtMillis: Long,
-    val accessedAtMillis: Long
+    val accessedAtMillis: Long,
+    /**
+     * User-defined manual ordering position, used when the Home list's sort
+     * mode is DocumentSortBy.MANUAL (drag-to-reorder after multi-select).
+     * Defaults to 0 for freshly-migrated rows; backfilled to match insertion
+     * order by the MIGRATION_1_2 Room migration so existing libraries start
+     * with a sensible order rather than everything tied at 0.
+     */
+    val manualOrder: Long = 0L
 )
 
 /**

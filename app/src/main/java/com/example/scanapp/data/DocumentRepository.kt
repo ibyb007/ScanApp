@@ -49,6 +49,10 @@ class DocumentRepository(private val context: Context) {
             } else {
                 if (hasQuery) dao.observeSearchResultsByDateDesc(query) else dao.observeAllDocumentsByDateDesc()
             }
+            // Manual order has no ascending/descending toggle — it's whatever
+            // order the person last dragged the rows into.
+            DocumentSortBy.MANUAL ->
+                if (hasQuery) dao.observeSearchResultsByManualOrder(query) else dao.observeAllDocumentsByManualOrder()
         }
     }
 
@@ -81,7 +85,8 @@ class DocumentRepository(private val context: Context) {
                     title = title,
                     createdAtMillis = now,
                     modifiedAtMillis = now,
-                    accessedAtMillis = now
+                    accessedAtMillis = now,
+                    manualOrder = now
                 )
             )
             val docDir = File(scansRoot, documentId.toString()).apply { mkdirs() }
@@ -108,7 +113,8 @@ class DocumentRepository(private val context: Context) {
                     title = title,
                     createdAtMillis = now,
                     modifiedAtMillis = now,
-                    accessedAtMillis = now
+                    accessedAtMillis = now,
+                    manualOrder = now
                 )
             )
             val docDir = File(scansRoot, documentId.toString()).apply { mkdirs() }
@@ -137,7 +143,8 @@ class DocumentRepository(private val context: Context) {
                 title = title,
                 createdAtMillis = now,
                 modifiedAtMillis = now,
-                accessedAtMillis = now
+                accessedAtMillis = now,
+                manualOrder = now
             )
         )
 
@@ -237,6 +244,27 @@ class DocumentRepository(private val context: Context) {
             oldFile.delete()
             markModified(documentId)
         }
+
+    /**
+     * Persists a new top-level document order for the Home list's manual
+     * drag-to-reorder mode. `orderedDocumentIds` must be every document
+     * currently visible in the list, in the desired new order — mirrors
+     * reorderPages above, but one level up (documents instead of pages).
+     * Assigns fresh manualOrder values spaced by index so ties never occur,
+     * and the caller is expected to also switch sortBy to MANUAL so this
+     * order is what's actually displayed afterward.
+     */
+    suspend fun reorderDocuments(orderedDocumentIds: List<Long>) = withContext(Dispatchers.IO) {
+        val updated = orderedDocumentIds.mapIndexedNotNull { newIndex, documentId ->
+            dao.getDocumentById(documentId)?.copy(manualOrder = newIndex.toLong())
+        }
+        if (updated.size != orderedDocumentIds.size) {
+            // Stale UI state (a document was deleted mid-drag) — skip rather
+            // than risk writing a partial/incorrect order.
+            return@withContext
+        }
+        dao.updateDocuments(updated)
+    }
 
     private fun uniquePageFileName(): String = "page_${System.currentTimeMillis()}_${(0..9999).random()}.jpg"
 

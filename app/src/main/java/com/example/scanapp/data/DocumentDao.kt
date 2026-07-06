@@ -22,7 +22,7 @@ data class PageWithDocumentTitle(
 )
 
 /** Sort options for the Home/Files list. */
-enum class DocumentSortBy { NAME, DATE_MODIFIED, PAGE_COUNT }
+enum class DocumentSortBy { NAME, DATE_MODIFIED, PAGE_COUNT, MANUAL }
 enum class SortDirection { ASCENDING, DESCENDING }
 
 @Dao
@@ -45,6 +45,12 @@ interface DocumentDao {
 
     @Query("SELECT * FROM documents ORDER BY modifiedAtMillis DESC")
     fun observeAllDocumentsByDateDesc(): Flow<List<DocumentEntity>>
+
+    @Query("SELECT * FROM documents ORDER BY manualOrder ASC")
+    fun observeAllDocumentsByManualOrder(): Flow<List<DocumentEntity>>
+
+    @Query("SELECT * FROM documents WHERE title LIKE '%' || :query || '%' ORDER BY manualOrder ASC")
+    fun observeSearchResultsByManualOrder(query: String): Flow<List<DocumentEntity>>
 
     @Query(
         "SELECT * FROM documents WHERE title LIKE '%' || :query || '%' " +
@@ -88,6 +94,9 @@ interface DocumentDao {
 
     @Update
     suspend fun updateDocument(document: DocumentEntity)
+
+    @Update
+    suspend fun updateDocuments(documents: List<DocumentEntity>)
 
     @Update
     suspend fun updatePages(pages: List<DocumentPageEntity>)

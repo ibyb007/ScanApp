@@ -4,10 +4,11 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [DocumentEntity::class, DocumentPageEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class ScanAppDatabase : RoomDatabase() {
@@ -18,13 +19,27 @@ abstract class ScanAppDatabase : RoomDatabase() {
         @Volatile
         private var instance: ScanAppDatabase? = null
 
+        /**
+         * Adds the manualOrder column backing the Home list's drag-to-reorder
+         * feature. Existing rows are backfilled with their own id as the
+         * initial manual position, so a freshly-migrated library orders the
+         * same way it was inserted rather than every row tying at 0 — the
+         * person can then drag to customize from there.
+         */
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE documents ADD COLUMN manualOrder INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE documents SET manualOrder = id")
+            }
+        }
+
         fun getInstance(context: Context): ScanAppDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ScanAppDatabase::class.java,
                     "scanapp.db"
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
             }
         }
 
