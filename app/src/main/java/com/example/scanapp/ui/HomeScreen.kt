@@ -1,14 +1,18 @@
 package com.example.scanapp.ui
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -19,6 +23,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
@@ -34,12 +39,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import coil.compose.rememberAsyncImagePainter
 import com.example.scanapp.export.OutputFormat
 import com.example.scanapp.data.DocumentSortBy
@@ -68,6 +76,7 @@ fun HomeScreen(
     onDelete: (RecentDocument) -> Unit = {},
     onShare: (RecentDocument, OutputFormat) -> Unit = { _, _ -> },
     onDeleteMultiple: (List<RecentDocument>) -> Unit = {},
+    onReorder: (List<RecentDocument>) -> Unit = {},
     searchQuery: String = "",
     onSearchQueryChange: (String) -> Unit = {},
     sortBy: DocumentSortBy = DocumentSortBy.DATE_MODIFIED,
@@ -77,7 +86,8 @@ fun HomeScreen(
     onToolsClick: () -> Unit = {},
     onBackupClick: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.AUTO,
-    onThemeModeSelected: (ThemeMode, Offset) -> Unit = { _, _ -> }
+    onThemeModeSelected: (ThemeMode, Offset) -> Unit = { _, _ -> },
+    listState: LazyListState = rememberLazyListState()
 ) {
     var actionSheetTarget by remember { mutableStateOf<RecentDocument?>(null) }
     var renameTarget by remember { mutableStateOf<RecentDocument?>(null) }
@@ -91,6 +101,17 @@ fun HomeScreen(
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var themeMenuExpanded by remember { mutableStateOf(false) }
     var toggleButtonCenter by remember { mutableStateOf(Offset.Zero) }
+
+    // Local, live-reorderable copy of the list. Kept in sync with
+    // recentDocuments except mid-drag, where we don't want an unrelated
+    // recomposition/emission to snap the dragged item back to its old spot.
+    var orderedDocs by remember { mutableStateOf(recentDocuments) }
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffsetY by remember { mutableStateOf(0f) }
+    var rowHeightPx by remember { mutableStateOf(0) }
+    LaunchedEffect(recentDocuments) {
+        if (draggingId == null) orderedDocs = recentDocuments
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(pdfImportError) {
@@ -111,6 +132,25 @@ fun HomeScreen(
             selectedIds + doc.id
         }
         if (selectedIds.isEmpty()) selectionMode = false
+    }
+
+    fun endDrag() {
+        draggingId = null
+        dragOffsetY = 0f
+        onReorder(orderedDocs)
+    }
+
+    // Long-pressing to select a document is how the person enters this
+    // multi-select state in the first place, so back should undo that one
+    // step (clear selection / close search) rather than fall through to the
+    // Activity's default back behavior, which would exit the app entirely.
+    BackHandler(enabled = selectionMode || searchExpanded) {
+        if (selectionMode) {
+            clearSelection()
+        } else if (searchExpanded) {
+            onSearchQueryChange("")
+            searchExpanded = false
+        }
     }
 
     Scaffold(
@@ -210,28 +250,66 @@ fun HomeScreen(
                 )
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = headerHeightDp)
                 ) {
-                    items(recentDocuments, key = { it.id }) { doc ->
-                        RecentDocumentRow(
-                            doc = doc,
-                            selectionMode = selectionMode,
-                            selected = doc.id in selectedIds,
-                            onClick = {
-                                if (selectionMode) toggleSelected(doc) else onDocumentClick(doc)
-                            },
-                            onLongClick = {
-                                if (!selectionMode) {
-                                    selectionMode = true
-                                    selectedIds = setOf(doc.id)
-                                } else {
-                                    toggleSelected(doc)
+                    items(orderedDocs, key = { it.id }) { doc ->
+                        val isDragging = draggingId == doc.id
+                        Box(
+                            modifier = Modifier
+                                .zIndex(if (isDragging) 1f else 0f)
+                                .graphicsLayer {
+                                    translationY = if (isDragging) dragOffsetY else 0f
                                 }
-                            },
-                            onMoreClick = { actionSheetTarget = doc }
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(start = 116.dp))
+                                .onGloballyPositioned { coords ->
+                                    if (rowHeightPx == 0) rowHeightPx = coords.size.height
+                                }
+                        ) {
+                            Column {
+                                RecentDocumentRow(
+                                    doc = doc,
+                                    selectionMode = selectionMode,
+                                    selected = doc.id in selectedIds,
+                                    onClick = {
+                                        if (selectionMode) toggleSelected(doc) else onDocumentClick(doc)
+                                    },
+                                    onLongClick = {
+                                        if (!selectionMode) {
+                                            selectionMode = true
+                                            selectedIds = setOf(doc.id)
+                                        } else {
+                                            toggleSelected(doc)
+                                        }
+                                    },
+                                    onMoreClick = { actionSheetTarget = doc },
+                                    showDragHandle = selectionMode && searchQuery.isBlank(),
+                                    onDragStart = { draggingId = doc.id; dragOffsetY = 0f },
+                                    onDrag = { deltaY ->
+                                        dragOffsetY += deltaY
+                                        val heightPx = rowHeightPx
+                                        if (heightPx > 0) {
+                                            val fromIndex = orderedDocs.indexOfFirst { it.id == doc.id }
+                                            if (fromIndex != -1) {
+                                                if (dragOffsetY > heightPx / 2 && fromIndex < orderedDocs.lastIndex) {
+                                                    orderedDocs = orderedDocs.toMutableList().apply {
+                                                        add(fromIndex + 1, removeAt(fromIndex))
+                                                    }
+                                                    dragOffsetY -= heightPx
+                                                } else if (dragOffsetY < -heightPx / 2 && fromIndex > 0) {
+                                                    orderedDocs = orderedDocs.toMutableList().apply {
+                                                        add(fromIndex - 1, removeAt(fromIndex))
+                                                    }
+                                                    dragOffsetY += heightPx
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onDragEnd = { endDrag() }
+                                )
+                                HorizontalDivider(modifier = Modifier.padding(start = 116.dp))
+                            }
+                        }
                     }
                 }
             }
@@ -457,6 +535,10 @@ private fun SortMenu(
             "Page count (fewest)",
             sortBy == DocumentSortBy.PAGE_COUNT && direction == SortDirection.ASCENDING
         ) { onSelect(DocumentSortBy.PAGE_COUNT, SortDirection.ASCENDING) }
+        SortMenuItem(
+            "Custom order (drag to arrange)",
+            sortBy == DocumentSortBy.MANUAL
+        ) { onSelect(DocumentSortBy.MANUAL, SortDirection.ASCENDING) }
     }
 }
 
@@ -519,7 +601,11 @@ private fun RecentDocumentRow(
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onMoreClick: () -> Unit
+    onMoreClick: () -> Unit,
+    showDragHandle: Boolean = false,
+    onDragStart: () -> Unit = {},
+    onDrag: (Float) -> Unit = {},
+    onDragEnd: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -569,7 +655,26 @@ private fun RecentDocumentRow(
             )
         }
 
-        if (!selectionMode) {
+        if (showDragHandle) {
+            Icon(
+                Icons.Filled.DragHandle,
+                contentDescription = "Drag to reorder",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(8.dp)
+                    .pointerInput(doc.id) {
+                        detectDragGestures(
+                            onDragStart = { onDragStart() },
+                            onDragEnd = { onDragEnd() },
+                            onDragCancel = { onDragEnd() },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                onDrag(dragAmount.y)
+                            }
+                        )
+                    }
+            )
+        } else if (!selectionMode) {
             IconButton(onClick = onMoreClick) {
                 Icon(Icons.Filled.MoreVert, contentDescription = "More options")
             }
