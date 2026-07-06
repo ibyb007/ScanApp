@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -75,8 +76,8 @@ fun HomeScreen(
     onSettingsClick: () -> Unit = {},
     onToolsClick: () -> Unit = {},
     onBackupClick: () -> Unit = {},
-    isDarkTheme: Boolean = false,
-    onToggleDarkModeClick: (Offset) -> Unit = {}
+    themeMode: ThemeMode = ThemeMode.AUTO,
+    onThemeModeSelected: (ThemeMode, Offset) -> Unit = { _, _ -> }
 ) {
     var actionSheetTarget by remember { mutableStateOf<RecentDocument?>(null) }
     var renameTarget by remember { mutableStateOf<RecentDocument?>(null) }
@@ -88,6 +89,7 @@ fun HomeScreen(
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var searchExpanded by remember { mutableStateOf(searchQuery.isNotEmpty()) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var themeMenuExpanded by remember { mutableStateOf(false) }
     var toggleButtonCenter by remember { mutableStateOf(Offset.Zero) }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -282,21 +284,36 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
                         )
-                        IconButton(
-                            onClick = { onToggleDarkModeClick(toggleButtonCenter) },
-                            modifier = Modifier
-                                .size(36.dp)
-                                .onGloballyPositioned { coords ->
-                                    val pos = coords.positionInRoot()
-                                    toggleButtonCenter = Offset(
-                                        pos.x + coords.size.width / 2f,
-                                        pos.y + coords.size.height / 2f
-                                    )
+                        Box {
+                            IconButton(
+                                onClick = { themeMenuExpanded = true },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .onGloballyPositioned { coords ->
+                                        val pos = coords.positionInRoot()
+                                        toggleButtonCenter = Offset(
+                                            pos.x + coords.size.width / 2f,
+                                            pos.y + coords.size.height / 2f
+                                        )
+                                    }
+                            ) {
+                                Icon(
+                                    when (themeMode) {
+                                        ThemeMode.AUTO -> Icons.Filled.BrightnessAuto
+                                        ThemeMode.DARK -> Icons.Filled.DarkMode
+                                        ThemeMode.LIGHT -> Icons.Filled.LightMode
+                                    },
+                                    contentDescription = "Day/night mode"
+                                )
+                            }
+                            ThemeMenu(
+                                expanded = themeMenuExpanded,
+                                current = themeMode,
+                                onDismiss = { themeMenuExpanded = false },
+                                onSelect = { newMode ->
+                                    themeMenuExpanded = false
+                                    onThemeModeSelected(newMode, toggleButtonCenter)
                                 }
-                        ) {
-                            Icon(
-                                if (isDarkTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
-                                contentDescription = if (isDarkTheme) "Switch to day mode" else "Switch to dark mode"
                             )
                         }
                         Spacer(Modifier.width(4.dp))
@@ -441,6 +458,48 @@ private fun SortMenu(
             sortBy == DocumentSortBy.PAGE_COUNT && direction == SortDirection.ASCENDING
         ) { onSelect(DocumentSortBy.PAGE_COUNT, SortDirection.ASCENDING) }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ThemeMenu(
+    expanded: Boolean,
+    current: ThemeMode,
+    onDismiss: () -> Unit,
+    onSelect: (ThemeMode) -> Unit
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        Text(
+            "Appearance",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+        ThemeMenuItem("Light", Icons.Filled.LightMode, current == ThemeMode.LIGHT) {
+            onSelect(ThemeMode.LIGHT)
+        }
+        ThemeMenuItem("Dark", Icons.Filled.DarkMode, current == ThemeMode.DARK) {
+            onSelect(ThemeMode.DARK)
+        }
+        ThemeMenuItem("Auto (system default)", Icons.Filled.BrightnessAuto, current == ThemeMode.AUTO) {
+            onSelect(ThemeMode.AUTO)
+        }
+    }
+}
+
+@Composable
+private fun ThemeMenuItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    DropdownMenuItem(
+        text = { Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
+        leadingIcon = { Icon(icon, contentDescription = null) },
+        onClick = onClick,
+        trailingIcon = { if (selected) Icon(Icons.Filled.Check, contentDescription = null) }
+    )
 }
 
 @Composable

@@ -2,6 +2,28 @@ package com.example.scanapp.ui
 
 import android.content.Context
 
+/** The three choices exposed by the day/night selector on the homepage. */
+enum class ThemeMode {
+    LIGHT,
+    DARK,
+    /** Follow the system day/night setting — the default until the person picks otherwise. */
+    AUTO
+}
+
+/** Maps a [ThemeMode] to the nullable override format ThemePreferences persists. */
+fun ThemeMode.toDarkOverride(): Boolean? = when (this) {
+    ThemeMode.LIGHT -> false
+    ThemeMode.DARK -> true
+    ThemeMode.AUTO -> null
+}
+
+/** Maps a persisted override value back to its [ThemeMode]. */
+fun Boolean?.toThemeMode(): ThemeMode = when (this) {
+    true -> ThemeMode.DARK
+    false -> ThemeMode.LIGHT
+    null -> ThemeMode.AUTO
+}
+
 /**
  * Persists the person's explicit day/night toggle choice across app
  * restarts.
