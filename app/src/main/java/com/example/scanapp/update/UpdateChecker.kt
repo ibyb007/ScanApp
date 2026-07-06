@@ -17,7 +17,11 @@ sealed class UpdateCheckResult {
         // release has no APK attached (e.g. source-only release) — auto-install
         // has nothing to fetch in that case and falls back to just opening
         // releaseUrl in the browser, same as a manual "View" tap would.
-        val apkDownloadUrl: String?
+        val apkDownloadUrl: String?,
+        // Up to 3 short changelog bullets extracted from the release notes,
+        // for a compact "what's new" summary in the update dialog. Empty if
+        // the release has no usable body text.
+        val changelog: List<String> = emptyList()
     ) : UpdateCheckResult()
     data class Error(val message: String) : UpdateCheckResult()
 }
@@ -79,7 +83,8 @@ object UpdateChecker {
                     currentVersion = currentVersionName,
                     latestVersion = latestTag,
                     releaseUrl = RELEASES_PAGE_URL,
-                    apkDownloadUrl = extractApkAssetUrl(release)
+                    apkDownloadUrl = extractApkAssetUrl(release),
+                    changelog = parseChangelog(release.optString("body"))
                 )
             } else {
                 UpdateCheckResult.UpToDate(currentVersionName)
@@ -111,6 +116,39 @@ object UpdateChecker {
             if (name.contains("universal", ignoreCase = true)) return url
         }
         return firstApkUrl
+    }
+
+    /**
+     * Turns a GitHub release body into up to 3 short, compact changelog
+     * bullets for the update dialog.
+     *
+     * GitHub's auto-generated notes look like:
+     * ```
+     * ## What's Changed
+     * * Add dark mode toggle by @user in #14
+     * * Fix crash on export by @user in #12
+     *
+     * **Full Changelog**: https://github.com/.../compare/v1...v2
+     * ```
+     * so this strips section headers, the trailing changelog-compare link
+     * line, bullet markers, and the "by @user in #NN" attribution suffix
+     * (noise for a short in-app summary), keeping just the change itself.
+     */
+    private fun parseChangelog(body: String?): List<String> {
+        if (body.isNullOrBlank()) return emptyList()
+        val attributionSuffix = Regex("""\s+by\s+@\S+\s+in\s+#?\d+.*$""", RegexOption.IGNORE_CASE)
+
+        return body.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .filterNot { it.startsWith("#") }
+            .filterNot { it.contains("Full Changelog", ignoreCase = true) }
+            .filterNot { it.startsWith("http", ignoreCase = true) }
+            .map { line -> line.removePrefix("- ").removePrefix("* ").removePrefix("• ").trim() }
+            .map { line -> attributionSuffix.replace(line, "").trim() }
+            .filter { it.isNotEmpty() }
+            .take(3)
+            .toList()
     }
 
     /** Compares dot-separated numeric version strings, e.g. "1.10.2" > "1.9.0". */
