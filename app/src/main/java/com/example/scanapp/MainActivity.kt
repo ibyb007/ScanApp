@@ -131,9 +131,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var repository: DocumentRepository
 
     private var currentScreen by mutableStateOf(Screen.HOME)
-    // null means "follow the system setting"; once the person taps the
-    // day/night toggle on the homepage this holds their explicit choice
-    // for the rest of the process lifetime.
+    // null means "follow the system setting" (auto); once the person taps
+    // the day/night toggle on the homepage this holds their explicit
+    // choice, persisted via ThemePreferences so it survives app restarts
+    // instead of reverting to auto.
     private var darkThemeOverride by mutableStateOf<Boolean?>(null)
     private var scannedPages by mutableStateOf<List<Uri>>(emptyList())
     private var isExporting by mutableStateOf(false)
@@ -218,6 +219,7 @@ class MainActivity : ComponentActivity() {
 
         checkUpdatesOnStart = com.example.scanapp.update.UpdatePreferences.isCheckOnStartEnabled(applicationContext)
         autoInstallUpdates = com.example.scanapp.update.UpdatePreferences.isAutoInstallEnabled(applicationContext)
+        darkThemeOverride = com.example.scanapp.ui.ThemePreferences.getDarkOverride(applicationContext)
         if (checkUpdatesOnStart) {
             checkForUpdateOnStartup()
         }
@@ -377,7 +379,11 @@ class MainActivity : ComponentActivity() {
                                 scope = themeRevealScope,
                                 graphicsLayer = themeRevealLayer,
                                 tapCenter = tapCenter,
-                                switchTheme = { darkThemeOverride = !effectiveDarkTheme }
+                                switchTheme = {
+                                    val newValue = !effectiveDarkTheme
+                                    darkThemeOverride = newValue
+                                    com.example.scanapp.ui.ThemePreferences.setDarkOverride(applicationContext, newValue)
+                                }
                             )
                         }
                     )
