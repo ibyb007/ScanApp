@@ -11,10 +11,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -23,8 +25,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
@@ -156,6 +160,7 @@ class MainActivity : ComponentActivity() {
 
     private var showUpdateAvailableDialog by mutableStateOf(false)
     private var startupUpdateVersion by mutableStateOf("")
+    private var startupUpdateChangelog by mutableStateOf<List<String>>(emptyList())
     private var isDownloadingUpdate by mutableStateOf(false)
     private var updateDownloadedBytes by mutableStateOf(0L)
     // -1 means "unknown total" (server didn't send Content-Length) — the
@@ -509,6 +514,29 @@ class MainActivity : ComponentActivity() {
                         text = {
                             Column {
                                 Text("Version $startupUpdateVersion is available.")
+                                if (startupUpdateChangelog.isNotEmpty()) {
+                                    Spacer(Modifier.height(10.dp))
+                                    Text(
+                                        "What's new",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    startupUpdateChangelog.forEach { entry ->
+                                        Row(modifier = Modifier.padding(vertical = 1.dp)) {
+                                            Text(
+                                                "•  ",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                entry,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
                                 if (isDownloadingUpdate) {
                                     Spacer(Modifier.height(12.dp))
                                     val total = updateTotalBytes
@@ -935,6 +963,7 @@ class MainActivity : ComponentActivity() {
                 latestReleaseUrl = result.releaseUrl
                 latestApkDownloadUrl = result.apkDownloadUrl
                 startupUpdateVersion = result.latestVersion
+                startupUpdateChangelog = result.changelog
                 showUpdateAvailableDialog = true
 
                 if (autoInstallUpdates && result.apkDownloadUrl != null) {
