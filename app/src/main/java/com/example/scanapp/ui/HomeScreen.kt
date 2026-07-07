@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -139,6 +140,76 @@ fun HomeScreen(
         draggingId = null
         dragOffsetY = 0f
         onReorder(orderedDocs)
+    }
+
+    // Shared by both the direct drag callback and the auto-scroll loop below:
+    // whenever dragOffsetY has drifted far enough past a row boundary, move
+    // the dragged item over that neighbor in orderedDocs and fold the
+    // crossed row's height back out of the offset. A while loop (rather than
+    // a single if) because a big auto-scroll tick can cross more than one
+    // row boundary in one step.
+    fun trySwap(docId: String) {
+        val heightPx = rowHeightPx
+        if (heightPx <= 0) return
+        var fromIndex = orderedDocs.indexOfFirst { it.id == docId }
+        if (fromIndex == -1) return
+        while (dragOffsetY > heightPx / 2 && fromIndex < orderedDocs.lastIndex) {
+            orderedDocs = orderedDocs.toMutableList().apply { add(fromIndex + 1, removeAt(fromIndex)) }
+            dragOffsetY -= heightPx
+            fromIndex += 1
+        }
+        while (dragOffsetY < -heightPx / 2 && fromIndex > 0) {
+            orderedDocs = orderedDocs.toMutableList().apply { add(fromIndex - 1, removeAt(fromIndex)) }
+            dragOffsetY += heightPx
+            fromIndex -= 1
+        }
+    }
+
+    // Auto-scrolls the list while a drag is held near the top or bottom edge
+    // of the visible viewport — e.g. dragging a document up and holding it
+    // at the top edge scrolls the documents above it into view (and down
+    // past the dragged item) so it can be dropped earlier than what's
+    // currently on screen, and the same in reverse at the bottom edge.
+    // Runs as a polling loop rather than off pointer-movement events, since
+    // holding still at the edge (no further movement) still needs to keep
+    // scrolling.
+    LaunchedEffect(draggingId) {
+        val activeId = draggingId ?: return@LaunchedEffect
+        while (draggingId == activeId) {
+            val heightPx = rowHeightPx
+            val itemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == activeId }
+            if (heightPx > 0 && itemInfo != null) {
+                val itemTop = itemInfo.offset + dragOffsetY
+                val itemBottom = itemTop + itemInfo.size
+                val viewportStart = listState.layoutInfo.viewportStartOffset
+                val viewportEnd = listState.layoutInfo.viewportEndOffset
+                // The nearer the dragged row is to an edge within this zone,
+                // the faster it scrolls — a hard on/off threshold feels
+                // jumpy compared to easing in as you approach the edge.
+                val edgeZonePx = heightPx * 0.75f
+                val maxScrollSpeedPx = heightPx * 0.6f
+                val scrollAmount = when {
+                    itemTop < viewportStart + edgeZonePx -> {
+                        val intensity = ((viewportStart + edgeZonePx - itemTop) / edgeZonePx).coerceIn(0f, 1f)
+                        -maxScrollSpeedPx * intensity
+                    }
+                    itemBottom > viewportEnd - edgeZonePx -> {
+                        val intensity = ((itemBottom - (viewportEnd - edgeZonePx)) / edgeZonePx).coerceIn(0f, 1f)
+                        maxScrollSpeedPx * intensity
+                    }
+                    else -> 0f
+                }
+                if (scrollAmount != 0f) {
+                    val consumed = listState.scrollBy(scrollAmount)
+                    // Counteract the scroll in the offset so the dragged row
+                    // stays put under the finger while the rows behind it
+                    // move — otherwise it'd visually jump with the scroll.
+                    dragOffsetY += consumed
+                    trySwap(activeId)
+                }
+            }
+            delay(16)
+        }
     }
 
     // Long-pressing to select a document is how the person enters this
@@ -288,23 +359,7 @@ fun HomeScreen(
                                     onDragStart = { draggingId = doc.id; dragOffsetY = 0f },
                                     onDrag = { deltaY ->
                                         dragOffsetY += deltaY
-                                        val heightPx = rowHeightPx
-                                        if (heightPx > 0) {
-                                            val fromIndex = orderedDocs.indexOfFirst { it.id == doc.id }
-                                            if (fromIndex != -1) {
-                                                if (dragOffsetY > heightPx / 2 && fromIndex < orderedDocs.lastIndex) {
-                                                    orderedDocs = orderedDocs.toMutableList().apply {
-                                                        add(fromIndex + 1, removeAt(fromIndex))
-                                                    }
-                                                    dragOffsetY -= heightPx
-                                                } else if (dragOffsetY < -heightPx / 2 && fromIndex > 0) {
-                                                    orderedDocs = orderedDocs.toMutableList().apply {
-                                                        add(fromIndex - 1, removeAt(fromIndex))
-                                                    }
-                                                    dragOffsetY += heightPx
-                                                }
-                                            }
-                                        }
+                                        trySwap(doc.id)
                                     },
                                     onDragEnd = { endDrag() }
                                 )
