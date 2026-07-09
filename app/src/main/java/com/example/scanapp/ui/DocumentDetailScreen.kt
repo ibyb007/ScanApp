@@ -55,7 +55,8 @@ fun DocumentDetailScreen(
     onAddPagesClick: () -> Unit,
     onDeletePage: (DetailPage) -> Unit,
     onReorder: (List<Long>) -> Unit,
-    onExportSelected: (List<DetailPage>) -> Unit = {}
+    onExportSelected: (List<DetailPage>) -> Unit = {},
+    onEditSelected: (List<DetailPage>) -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
@@ -75,14 +76,26 @@ fun DocumentDetailScreen(
     Scaffold(
         floatingActionButton = {
             if (selectionMode) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        val selectedObjects = pages.filter { it.pageId in selectedPages }
-                        onExportSelected(selectedObjects)
-                    },
-                    icon = { Icon(Icons.Filled.FileDownload, contentDescription = null) },
-                    text = { Text("Export selected (${selectedPages.size})") }
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            val selectedObjects = pages.filter { it.pageId in selectedPages }
+                            onEditSelected(selectedObjects)
+                        },
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                        text = { Text("Edit") }
+                    )
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            val selectedObjects = pages.filter { it.pageId in selectedPages }
+                            onExportSelected(selectedObjects)
+                        },
+                        icon = { Icon(Icons.Filled.FileDownload, contentDescription = null) },
+                        text = { Text("Export selected (${selectedPages.size})") }
+                    )
+                }
             }
         },
         floatingActionButtonPosition = FabPosition.End,
