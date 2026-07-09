@@ -27,7 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -119,22 +121,29 @@ fun BackupScreen(
         }
     }
 
+    // ScanAppBottomNav is overlaid directly on the content Box below instead
+    // of living in Scaffold's bottomBar slot, so it floats over the scrolled
+    // content (and the real background shows around/behind it) rather than
+    // Scaffold reserving a plain rectangle of layout space for it.
+    var navBarHeightPx by remember { mutableStateOf(0) }
+    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+
     Scaffold(
-        bottomBar = {
-            ScanAppBottomNav(
-                selectedIndex = 2,
-                onHomeClick = onHomeClick,
-                onToolsClick = onToolsClick,
-                onSettingsClick = onSettingsClick,
-                onBackupClick = {}
-            )
-        }
+        // Match HomeScreen: don't let Scaffold reserve an opaque
+        // system-bar-height strip behind the bottom bar — ScanAppBottomNav
+        // now handles its own transparent navigation-bar inset padding, so
+        // the app's real background should show through around it.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { padding ->
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
-            .padding(16.dp)
+    ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 16.dp)
             .verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -239,7 +248,16 @@ fun BackupScreen(
 
         // Dedicated Bot Cloud Sync Area Card
         Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                // Extra bottom padding reserves clearance for the floating
+                // nav pill *inside* the card, so the card's own (lighter)
+                // background extends to cover that space instead of leaving
+                // a gap that shows raw (much darker) page background —
+                // that raw-background gap was what read as a stark black
+                // rectangle sitting above the pill.
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp + navBarHeightDp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (telegramActivity != TelegramActivityState.NONE) {
                         TelegramActivityIcon(activity = telegramActivity, tint = MaterialTheme.colorScheme.primary)
@@ -366,6 +384,26 @@ fun BackupScreen(
                 }
             }
         }
+
+        // Small trailing gap for breathing room below the last card — the
+        // card itself now reserves the real nav clearance (see above), so
+        // this doesn't need to match navBarHeightDp.
+        Spacer(Modifier.height(16.dp))
+    }
+
+    // Overlaid on top of the scrolled content instead of reserved via
+    // Scaffold's bottomBar, so the real page background shows through
+    // around/behind the pill instead of a plain rectangle.
+    ScanAppBottomNav(
+        selectedIndex = 2,
+        onHomeClick = onHomeClick,
+        onToolsClick = onToolsClick,
+        onSettingsClick = onSettingsClick,
+        onBackupClick = {},
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .onGloballyPositioned { navBarHeightPx = it.size.height }
+    )
     }
     }
 }

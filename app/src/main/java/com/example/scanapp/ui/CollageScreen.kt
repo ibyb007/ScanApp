@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
@@ -194,7 +195,17 @@ fun CollageScreen(
 
     val hasAnyAssignedPage = pages.any { page -> page.frames.any { it.pageId != null } }
 
+    // ScanAppBottomNav is overlaid on the content Box below instead of
+    // living in Scaffold's bottomBar slot — see HomeScreen for why. The
+    // editor Column reserves this much bottom space for it so the fixed
+    // CollageBottomDock toolbar still sits fully above the pill.
+    var navBarHeightPx by remember { mutableStateOf(0) }
+    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+
     Scaffold(
+        // See HomeScreen: stop Scaffold from painting an opaque
+        // system-bar-height strip behind the floating bottom nav pill.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             if (!isFullscreenEdit) {
                 TopAppBar(
@@ -220,20 +231,18 @@ fun CollageScreen(
                     }
                 )
             }
-        },
-        bottomBar = {
-            if (!isFullscreenEdit) {
-                ScanAppBottomNav(
-                    selectedIndex = 1,
-                    onHomeClick = onHomeClick,
-                    onToolsClick = {},
-                    onBackupClick = onBackupClick,
-                    onSettingsClick = onSettingsClick
-                )
-            }
         }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = if (!isFullscreenEdit) navBarHeightDp else 0.dp)
+        ) {
 
             Box(
                 modifier = Modifier
@@ -297,6 +306,23 @@ fun CollageScreen(
                     onAddPagesClick = { showPagePicker = true }
                 )
             }
+        }
+
+        // Overlaid on top of the editor content instead of reserved via
+        // Scaffold's bottomBar — see HomeScreen for the reasoning. Hidden
+        // in fullscreen edit mode, same as before.
+        if (!isFullscreenEdit) {
+            ScanAppBottomNav(
+                selectedIndex = 1,
+                onHomeClick = onHomeClick,
+                onToolsClick = {},
+                onBackupClick = onBackupClick,
+                onSettingsClick = onSettingsClick,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .onGloballyPositioned { navBarHeightPx = it.size.height }
+            )
+        }
         }
     }
 

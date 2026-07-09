@@ -154,6 +154,15 @@ fun HomeScreen(
         }
     }
 
+    // ScanAppBottomNav now overlays content directly (see the Box in the
+    // Scaffold body below) instead of living in Scaffold's bottomBar slot,
+    // so nothing reserves layout space for it automatically anymore.
+    // Everything that needs to stay clear of the floating pill — the FAB,
+    // the snackbar, the list's own bottom padding — reads this measured
+    // height and pads itself up by that amount instead.
+    var navBarHeightPx by remember { mutableStateOf(0) }
+    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+
     Scaffold(
         // Stop Scaffold from reserving opaque space for the status bar —
         // with the Activity now edge-to-edge (see enableEdgeToEdge() in
@@ -161,7 +170,13 @@ fun HomeScreen(
         // our own background can bleed all the way to the top of the screen
         // instead of stopping at a hard line under the status bar.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            // Padded up to clear the floating nav pill, which now overlays
+            // content instead of living in a Scaffold-reserved bottomBar.
+            Box(Modifier.padding(bottom = navBarHeightDp)) {
+                SnackbarHost(snackbarHostState)
+            }
+        },
         topBar = {
             if (selectionMode) {
                 TopAppBar(
@@ -187,12 +202,15 @@ fun HomeScreen(
                 )
             }
         },
-        bottomBar = {
-            ScanAppBottomNav(onSettingsClick = onSettingsClick, onToolsClick = onToolsClick, onBackupClick = onBackupClick)
-        },
         floatingActionButton = {
             if (!selectionMode) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Padded up to float above the nav pill (which now overlays
+                // content, rather than reserving Scaffold layout space that
+                // the FAB would otherwise automatically sit above).
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(bottom = navBarHeightDp)
+                ) {
                     if (isImportingPdf && pdfImportProgressText != null) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
@@ -246,14 +264,14 @@ fun HomeScreen(
                 EmptyRecentsState(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = headerHeightDp),
+                        .padding(top = headerHeightDp, bottom = navBarHeightDp),
                     isSearching = searchQuery.isNotBlank()
                 )
             } else {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = headerHeightDp)
+                    contentPadding = PaddingValues(top = headerHeightDp, bottom = navBarHeightDp)
                 ) {
                     items(orderedDocs, key = { it.id }) { doc ->
                         val isDragging = draggingId == doc.id
@@ -452,6 +470,19 @@ fun HomeScreen(
                 }
                 }
             }
+
+            // Overlaid on top of the list (not reserved via Scaffold's
+            // bottomBar) so rows keep scrolling underneath it and the app's
+            // real background is what shows around/behind the pill, rather
+            // than a plain rectangle nothing else ever draws into.
+            ScanAppBottomNav(
+                onSettingsClick = onSettingsClick,
+                onToolsClick = onToolsClick,
+                onBackupClick = onBackupClick,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .onGloballyPositioned { navBarHeightPx = it.size.height }
+            )
         }
     }
 
@@ -724,6 +755,7 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier, isSearching: Boolea
 
 @Composable
 internal fun ScanAppBottomNav(
+    modifier: Modifier = Modifier,
     selectedIndex: Int = 0,
     onHomeClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
@@ -740,9 +772,19 @@ internal fun ScanAppBottomNav(
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 0.dp,
-        modifier = Modifier
+        // By default NavigationBar reserves extra bottom space equal to the
+        // gesture/navigation bar height and fills it with containerColor —
+        // that's the opaque strip stretching from the pill down to the
+        // bottom of the screen. We turn that off here and instead push the
+        // whole pill up above the gesture area with plain (transparent)
+        // padding, so the screen's real background shows through behind
+        // it and around it, edge-to-edge.
+        windowInsets = WindowInsets(0, 0, 0, 0),
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .height(68.dp)
             .clip(RoundedCornerShape(28.dp))
     ) {
         items.forEach { (label, icon, index) ->

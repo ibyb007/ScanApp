@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -65,7 +67,15 @@ fun SettingsScreen(
     onToolsClick: () -> Unit = {},
     onBackupClick: () -> Unit = {}
 ) {
+    // ScanAppBottomNav is overlaid on the content Box below instead of
+    // living in Scaffold's bottomBar slot — see HomeScreen for why.
+    var navBarHeightPx by remember { mutableStateOf(0) }
+    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+
     Scaffold(
+        // See HomeScreen: stop Scaffold from painting an opaque
+        // system-bar-height strip behind the floating bottom nav pill.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
@@ -83,23 +93,18 @@ fun SettingsScreen(
                     }
                 }
             )
-        },
-        bottomBar = {
-            ScanAppBottomNav(
-                selectedIndex = 3,
-                onHomeClick = onHomeClick,
-                onToolsClick = onToolsClick,
-                onBackupClick = onBackupClick,
-                onSettingsClick = {}
-            )
         }
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+                .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp + navBarHeightDp)
         ) {
             SectionLabel("General")
             Spacer(Modifier.height(4.dp))
@@ -231,6 +236,20 @@ fun SettingsScreen(
             Spacer(Modifier.height(4.dp))
 
             DeveloperInfoSection()
+        }
+
+        // Overlaid on top of the scrolled content instead of reserved via
+        // Scaffold's bottomBar — see HomeScreen for the reasoning.
+        ScanAppBottomNav(
+            selectedIndex = 3,
+            onHomeClick = onHomeClick,
+            onToolsClick = onToolsClick,
+            onBackupClick = onBackupClick,
+            onSettingsClick = {},
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .onGloballyPositioned { navBarHeightPx = it.size.height }
+        )
         }
     }
 }
