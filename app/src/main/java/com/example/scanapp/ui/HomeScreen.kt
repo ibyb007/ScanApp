@@ -2,7 +2,6 @@ package com.example.scanapp.ui
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -40,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -53,6 +53,9 @@ import coil.compose.rememberAsyncImagePainter
 import com.example.scanapp.export.OutputFormat
 import com.example.scanapp.data.DocumentSortBy
 import com.example.scanapp.data.SortDirection
+
+// Explicit import to fix the build failure
+import com.example.scanapp.ui.ThemeMode
 
 data class RecentDocument(
     val id: String,
@@ -103,9 +106,6 @@ fun HomeScreen(
     var themeMenuExpanded by remember { mutableStateOf(false) }
     var toggleButtonCenter by remember { mutableStateOf(Offset.Zero) }
 
-    // Local, live-reorderable copy of the list. Kept in sync with
-    // recentDocuments except mid-drag, where we don't want an unrelated
-    // recomposition/emission to snap the dragged item back to its old spot.
     var orderedDocs by remember { mutableStateOf(recentDocuments) }
     var draggingId by remember { mutableStateOf<String?>(null) }
     var dragOffsetY by remember { mutableStateOf(0f) }
@@ -141,10 +141,6 @@ fun HomeScreen(
         onReorder(orderedDocs)
     }
 
-    // Long-pressing to select a document is how the person enters this
-    // multi-select state in the first place, so back should undo that one
-    // step (clear selection / close search) rather than fall through to the
-    // Activity's default back behavior, which would exit the app entirely.
     BackHandler(enabled = selectionMode || searchExpanded) {
         if (selectionMode) {
             clearSelection()
@@ -154,25 +150,12 @@ fun HomeScreen(
         }
     }
 
-    // ScanAppBottomNav now overlays content directly (see the Box in the
-    // Scaffold body below) instead of living in Scaffold's bottomBar slot,
-    // so nothing reserves layout space for it automatically anymore.
-    // Everything that needs to stay clear of the floating pill — the FAB,
-    // the snackbar, the list's own bottom padding — reads this measured
-    // height and pads itself up by that amount instead.
     var navBarHeightPx by remember { mutableStateOf(0) }
     val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
 
     Scaffold(
-        // Stop Scaffold from reserving opaque space for the status bar —
-        // with the Activity now edge-to-edge (see enableEdgeToEdge() in
-        // MainActivity), we handle the status bar inset ourselves below so
-        // our own background can bleed all the way to the top of the screen
-        // instead of stopping at a hard line under the status bar.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = {
-            // Padded up to clear the floating nav pill, which now overlays
-            // content instead of living in a Scaffold-reserved bottomBar.
             Box(Modifier.padding(bottom = navBarHeightDp)) {
                 SnackbarHost(snackbarHostState)
             }
@@ -204,9 +187,6 @@ fun HomeScreen(
         },
         floatingActionButton = {
             if (!selectionMode) {
-                // Padded up to float above the nav pill (which now overlays
-                // content, rather than reserving Scaffold layout space that
-                // the FAB would otherwise automatically sit above).
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(bottom = navBarHeightDp)
@@ -244,14 +224,6 @@ fun HomeScreen(
             }
         }
     ) { padding ->
-        // A fixed Row above the list (what you had before) can never scroll
-        // behind the status bar — it just sits there, and the list only
-        // ever starts underneath it. To get the Poweramp-style effect, the
-        // list itself has to run the full height of the screen (top edge
-        // included), with the header floating on top of it as a separate,
-        // translucent layer. That way list rows that reach the top actually
-        // pass behind the header and behind the status bar, instead of
-        // stopping short of it.
         var headerHeightPx by remember { mutableStateOf(0) }
         val headerHeightDp = with(LocalDensity.current) { headerHeightPx.toDp() }
 
@@ -333,43 +305,20 @@ fun HomeScreen(
                 }
             }
 
-            // Floating header: translucent so rows scrolling underneath it
-            // (and under the status bar above it) are still faintly visible
-            // through it, the same way Poweramp's track bar sits over the
-            // lyrics rather than pushing them down. Gets more translucent
-            // still while the list is actively being scrolled, then settles
-            // back to its resting opacity once scrolling stops.
-            val headerAlpha by animateFloatAsState(
-                targetValue = if (listState.isScrollInProgress) 0.6f else 0.92f,
-                label = "headerAlpha"
-            )
+            // Header background is always fully transparent; only its text/icons remain visible.
             Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = headerAlpha),
+                color = Color.Transparent,
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopStart)
                     .onGloballyPositioned { headerHeightPx = it.size.height }
             ) {
-                // Material3 pads every IconButton/TextButton out to a 48dp
-                // minimum touch target regardless of visual size — invisible,
-                // but real for hit-testing. With the header's bottom padding
-                // trimmed down tight against the list, that invisible padding
-                // was overlapping the first row below and swallowing the
-                // touch before its drag handle ever saw it. Pinning it to 0
-                // here makes each button's tap area match its visual bounds.
                 CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        // The selection TopAppBar above already reserves and
-                        // pads for the status bar, and Scaffold's own content
-                        // padding already accounts for that combined height —
-                        // adding statusBarsPadding here too would double it
-                        // up, which is what was pushing this row way down
-                        // below the "N selected" bar. Only apply it ourselves
-                        // when there's no TopAppBar doing that job already.
                         .then(if (!selectionMode) Modifier.statusBarsPadding() else Modifier)
-                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 0.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (searchExpanded) {
@@ -397,6 +346,7 @@ fun HomeScreen(
                             "All files",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f)
                         )
                         Box {
@@ -471,10 +421,6 @@ fun HomeScreen(
                 }
             }
 
-            // Overlaid on top of the list (not reserved via Scaffold's
-            // bottomBar) so rows keep scrolling underneath it and the app's
-            // real background is what shows around/behind the pill, rather
-            // than a plain rectangle nothing else ever draws into.
             ScanAppBottomNav(
                 onSettingsClick = onSettingsClick,
                 onToolsClick = onToolsClick,
@@ -662,7 +608,7 @@ private fun RecentDocumentRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (selectionMode) {
@@ -772,13 +718,6 @@ internal fun ScanAppBottomNav(
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 0.dp,
-        // By default NavigationBar reserves extra bottom space equal to the
-        // gesture/navigation bar height and fills it with containerColor —
-        // that's the opaque strip stretching from the pill down to the
-        // bottom of the screen. We turn that off here and instead push the
-        // whole pill up above the gesture area with plain (transparent)
-        // padding, so the screen's real background shows through behind
-        // it and around it, edge-to-edge.
         windowInsets = WindowInsets(0, 0, 0, 0),
         modifier = modifier
             .fillMaxWidth()
