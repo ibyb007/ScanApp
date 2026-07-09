@@ -112,7 +112,7 @@ fun ScanAppTheme(
     )
 }
 
-private enum class Screen { HOME, DETAIL, SCAN_EXPORT, SETTINGS, COLLAGE, BACKUP }
+private enum class Screen { HOME, DETAIL, IMAGE_PREVIEW, SCAN_EXPORT, SETTINGS, COLLAGE, BACKUP }
 
 class MainActivity : ComponentActivity() {
 
@@ -180,6 +180,7 @@ class MainActivity : ComponentActivity() {
     private var openDocumentId by mutableStateOf<Long?>(null)
     private var openDocumentTitle by mutableStateOf("")
     private var openDocumentPages by mutableStateOf<List<DetailPage>>(emptyList())
+    private var previewStartIndex by mutableStateOf(0)
 
     private var collagePickerPages by mutableStateOf<List<com.example.scanapp.ui.CollagePickerPage>>(emptyList())
     private var isSavingCollage by mutableStateOf(false)
@@ -192,6 +193,7 @@ class MainActivity : ComponentActivity() {
         object NewDocument : PendingScan()
         data class AddPages(val documentId: Long) : PendingScan()
         data class ReplacePage(val documentId: Long, val pageId: Long) : PendingScan()
+        data class ReplacePages(val documentId: Long, val pageIds: List<Long>) : PendingScan()
     }
     private var pendingScan: PendingScan = PendingScan.NewDocument
     private lateinit var singlePageScannerLauncher: DocumentScannerLauncher
@@ -347,6 +349,7 @@ class MainActivity : ComponentActivity() {
                 BackHandler(enabled = currentScreen != Screen.HOME) {
                     currentScreen = when (currentScreen) {
                         Screen.DETAIL -> Screen.HOME
+                        Screen.IMAGE_PREVIEW -> Screen.DETAIL
                         Screen.SCAN_EXPORT -> if (openDocumentId != null) Screen.DETAIL else Screen.HOME
                         Screen.SETTINGS -> Screen.HOME
                         Screen.COLLAGE -> Screen.HOME
@@ -432,11 +435,29 @@ class MainActivity : ComponentActivity() {
                                 onDelete = { deleteOpenDocument(documentId) },
                                 onShare = { format -> shareDocument(documentId, openDocumentTitle, format) },
                                 onExportClick = { openExportScreenForOpenDocument() },
-                                onPageClick = { page -> launchPageEditViaMlKit(documentId, page) },
+                                onPageClick = { page ->
+                                    val index = openDocumentPages.indexOfFirst { it.pageId == page.pageId }
+                                    previewStartIndex = if (index >= 0) index else 0
+                                    currentScreen = Screen.IMAGE_PREVIEW
+                                },
                                 onAddPagesClick = { launchAddPagesScan(documentId) },
                                 onDeletePage = { page -> deletePageFromOpenDocument(documentId, page) },
                                 onReorder = { orderedIds -> reorderOpenDocumentPages(documentId, orderedIds) },
-                                onExportSelected = { selectedPages -> openExportScreenForSelectedPages(selectedPages) }
+                                onExportSelected = { selectedPages -> openExportScreenForSelectedPages(selectedPages) },
+                                onEditSelected = { selectedPages -> launchPagesEditViaMlKit(documentId, selectedPages) }
+                            )
+                        }
+                    }
+                    Screen.IMAGE_PREVIEW -> {
+                        val documentId = openDocumentId
+                        if (documentId == null || openDocumentPages.isEmpty()) {
+                            currentScreen = Screen.HOME
+                        } else {
+                            com.example.scanapp.ui.ImagePreviewScreen(
+                                pages = openDocumentPages,
+                                initialIndex = previewStartIndex,
+                                onBackClick = { currentScreen = Screen.DETAIL },
+                                onEditClick = { page -> launchPageEditViaMlKit(documentId, page) }
                             )
                         }
                     }
@@ -787,6 +808,27 @@ class MainActivity : ComponentActivity() {
                     withContext(Dispatchers.IO) { TempGalleryExport.cleanupAllTempCopies(applicationContext) }
                 }
             }
+            is PendingScan.ReplacePages -> {
+                lifecycleScope.launch {
+                    // We can't ask ML Kit to hand pages back tagged with which
+                    // original page they replace, so we rely on the user
+                    // picking/ordering them in the gallery the same way we
+                    // listed them (oldest-selected-page-first) and match up
+                    // results to page IDs positionally.
+                    val bitmaps = withContext(Dispatchers.IO) {
+                        uris.mapNotNull { uri ->
+                            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+                        }
+                    }
+                    bitmaps.forEachIndexed { index, bitmap ->
+                        val pageId = pending.pageIds.getOrNull(index) ?: return@forEachIndexed
+                        repository.replacePageImage(pending.documentId, pageId, bitmap)
+                    }
+                    refreshOpenDocument(pending.documentId)
+                    currentScreen = Screen.DETAIL
+                    withContext(Dispatchers.IO) { TempGalleryExport.cleanupAllTempCopies(applicationContext) }
+                }
+            }
         }
     }
 
@@ -924,6 +966,50 @@ class MainActivity : ComponentActivity() {
 
             pendingScan = PendingScan.ReplacePage(documentId, page.pageId)
             singlePageScannerLauncher.launch()
+        }
+    }
+
+    /**
+     * Re-edit one or more existing pages via ML Kit's own Filters/Crop/Clean
+     * UI, entered from the detail screen's multi-select "Edit" button.
+     *
+     * Same temp-gallery-copy trick as [launchPageEditViaMlKit], just for a
+     * batch: every selected page is copied out to the gallery first, then a
+     * single ML Kit session is launched so the user can import all of them
+     * at once. A single selected page reuses the existing one-page flow,
+     * which pins the scanner to a page limit of 1 for a tighter match; for
+     * multiple pages there's no API to constrain which files ML Kit's
+     * picker shows or in what order they come back, so we ask the user to
+     * pick them in the same order we exported them (oldest page first) and
+     * match results back to page IDs positionally once the scan returns.
+     */
+    private fun launchPagesEditViaMlKit(documentId: Long, pages: List<DetailPage>) {
+        if (pages.isEmpty()) return
+        if (pages.size == 1) {
+            launchPageEditViaMlKit(documentId, pages.first())
+            return
+        }
+
+        lifecycleScope.launch {
+            val orderedPages = pages.sortedBy { it.pageIndex }
+
+            withContext(Dispatchers.IO) {
+                orderedPages.forEach { page ->
+                    val sourceFile = File(page.uri.path ?: return@forEach)
+                    if (sourceFile.exists()) {
+                        TempGalleryExport.exportForPicking(applicationContext, sourceFile)
+                    }
+                }
+            }
+
+            android.widget.Toast.makeText(
+                this@MainActivity,
+                "Tap the gallery icon and pick all ${orderedPages.size} pages you just opened, in order",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+
+            pendingScan = PendingScan.ReplacePages(documentId, orderedPages.map { it.pageId })
+            scannerLauncher.launch()
         }
     }
 
