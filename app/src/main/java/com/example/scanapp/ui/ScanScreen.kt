@@ -180,11 +180,11 @@ fun ScanScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background) // Fixes navbar area opacity
+            .background(MaterialTheme.colorScheme.background)
     ) {
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            colors = ScaffoldDefaults.colors(containerColor = Color.Transparent),
+            containerColor = Color.Transparent, // Correct implementation for M3 Scaffold
             topBar = {
                 TopAppBar(
                     title = { Text("Scan & Export") },
@@ -223,7 +223,7 @@ fun ScanScreen(
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
             ) {
-                Spacer(Modifier.height(8.dp)) // Minimum functional spacer
+                Spacer(Modifier.height(8.dp))
 
                 Button(onClick = onScanClick, modifier = Modifier.fillMaxWidth()) {
                     Text(if (scannedPages.isEmpty()) "Scan Document" else "Scan More Pages")
@@ -479,7 +479,7 @@ fun ScanScreen(
                         )
                     }
 
-                    Spacer(Modifier.height(100.dp)) // Clears floating action button space
+                    Spacer(Modifier.height(100.dp))
                 }
             }
         }
