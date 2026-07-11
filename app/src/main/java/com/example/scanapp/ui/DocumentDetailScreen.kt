@@ -5,8 +5,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress // Added explicit missing import
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -138,6 +140,7 @@ fun DocumentDetailScreen(
                     Image(
                         painter = rememberAsyncImagePainter(uri),
                         contentDescription = "Page ${index + 1}",
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
 
@@ -192,7 +195,7 @@ fun DocumentDetailScreen(
                         }
                     }
 
-                    // Top Left Page Counter Index Badge Bubble
+                    // Top Left Floating Page Counter Index Badge Bubble
                     Surface(
                         color = Color.Black.copy(alpha = 0.5f),
                         shape = CircleShape,
@@ -297,7 +300,6 @@ fun DocumentDetailScreen(
                         }
                     } else {
                         IconButton(onClick = {
-                            // Delete selected batch action hooks here
                             val itemsToRemove = selectedIndices.sortedDescending()
                             itemsToRemove.forEach { onRemovePageClick(it) }
                             selectionMode = false
