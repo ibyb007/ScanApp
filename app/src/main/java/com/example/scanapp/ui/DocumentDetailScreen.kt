@@ -3,10 +3,7 @@ package com.example.scanapp.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -62,7 +59,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
@@ -71,19 +67,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import coil.compose.rememberAsyncImagePainter
 import com.example.scanapp.export.OutputFormat
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 private const val GRID_COLUMNS = 2
-
-// Used to distinguish "the long-press timeout genuinely elapsed" from
-// "waitForUpOrCancellation() returned null because something else (like
-// grid scrolling) claimed the gesture" — both would otherwise collapse to
-// a bare null and be indistinguishable.
-private sealed class RaceResult {
-    data object TimedOut : RaceResult()
-    data class Released(val change: androidx.compose.ui.input.pointer.PointerInputChange?) : RaceResult()
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -390,6 +376,7 @@ fun DocumentDetailScreen(
             itemsIndexed(orderedPages, key = { _, page -> page.pageId }) { index, page ->
                 val isDragging = draggingPageId == page.pageId
                 val isSelected = selectedPageIds.contains(page.pageId)
+                var suppressNextClick by remember { mutableStateOf(false) }
 
                 Box(
                     modifier = Modifier
@@ -411,55 +398,52 @@ fun DocumentDetailScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .pointerInput(page.pageId, orderedPages.size) {
-                            // A single gesture recognizer drives taps, long-press-to-select,
-                            // and long-press-to-drag together, so they can't double-fire on
-                            // the same touch stream the way two independent detectors
-                            // (pointerInput + clickable) used to.
-                            awaitEachGesture {
-                                val down = awaitFirstDown()
-
-                                // Race the long-press timeout against the finger lifting
-                                // or the gesture being claimed by something else (e.g. the
-                                // grid's own scrolling). withTimeoutOrNull's "null" and
-                                // waitForUpOrCancellation's "null" both collapse to null if
-                                // handled naively, so they're wrapped to stay distinguishable:
-                                // TimedOut = long press recognized; Released(null) = someone
-                                // else (scroll) claimed the gesture, so we back off entirely.
-                                val raceResult = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                                    RaceResult.Released(waitForUpOrCancellation())
-                                } ?: RaceResult.TimedOut
-
-                                when (raceResult) {
-                                    is RaceResult.Released -> {
-                                        val upChange = raceResult.change
-                                        if (upChange != null) {
-                                            // Released quickly, no movement: a plain tap.
-                                            if (selectedPageIds.isNotEmpty()) {
-                                                togglePageSelection(page)
-                                            } else {
-                                                onPageClick(page)
-                                            }
-                                        }
-                                        // upChange == null means the gesture was claimed by
-                                        // something else (e.g. the grid started scrolling) —
-                                        // nothing to do, let it go.
-                                        return@awaitEachGesture
+                            // A long press either (a) selects the page, if the
+                            // finger never moves, or (b) drags/reorders it, if
+                            // it does. detectDragGesturesAfterLongPress already
+                            // correctly defers to ancestor scrolling for plain
+                            // drags/scrolls and ignores quick taps entirely, so
+                            // it's left untouched. The only thing it can't do is
+                            // stop the sibling .clickable from also firing when
+                            // the long press ends with no movement — that's
+                            // handled below with suppressNextClick, which gets
+                            // set the moment the long press is recognized
+                            // (~500ms before the eventual release), so its value
+                            // is already settled by the time that release event
+                            // is dispatched, regardless of dispatch order.
+                            var moved = false
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    moved = false
+                                    dragOffset = Offset.Zero
+                                    draggingPageId = page.pageId
+                                    suppressNextClick = true
+                                },
+                                onDragEnd = {
+                                    draggingPageId = null
+                                    dragOffset = Offset.Zero
+                                    if (moved) {
+                                        onReorder(orderedPages.map { it.pageId })
+                                    } else if (selectedPageIds.isNotEmpty()) {
+                                        togglePageSelection(page)
+                                    } else {
+                                        selectedPageIds = setOf(page.pageId)
                                     }
-                                    RaceResult.TimedOut -> {
-                                        // Long-press recognized and finger is still down.
-                                    }
-                                }
-
-                                // Enter drag tracking; if it never actually moves, treat
-                                // the eventual release as a selection toggle instead.
-                                var moved = false
-                                dragOffset = Offset.Zero
-                                draggingPageId = page.pageId
-
-                                drag(down.id) { change ->
+                                    // Covers the "moved" case, where the sibling
+                                    // clickable's own touch-slop tracking already
+                                    // cancelled its click and never consumed the
+                                    // flag itself.
+                                    suppressNextClick = false
+                                },
+                                onDragCancel = {
+                                    draggingPageId = null
+                                    dragOffset = Offset.Zero
+                                    suppressNextClick = false
+                                },
+                                onDrag = { change, delta ->
                                     moved = true
                                     change.consume()
-                                    dragOffset += change.positionChange()
+                                    dragOffset += delta
 
                                     if (cellWidthPx > 0 && cellHeightPx > 0) {
                                         val colShift = (dragOffset.x / cellWidthPx).roundToInt()
@@ -484,16 +468,18 @@ fun DocumentDetailScreen(
                                         }
                                     }
                                 }
-
-                                draggingPageId = null
-                                dragOffset = Offset.Zero
-                                if (moved) {
-                                    onReorder(orderedPages.map { it.pageId })
-                                } else if (selectedPageIds.isNotEmpty()) {
-                                    togglePageSelection(page)
-                                } else {
-                                    selectedPageIds = setOf(page.pageId)
-                                }
+                            )
+                        }
+                        .clickable {
+                            if (suppressNextClick) {
+                                // A stationary long press already handled this
+                                // release as a selection toggle; swallow the
+                                // click that the platform also generated for it.
+                                suppressNextClick = false
+                            } else if (selectedPageIds.isNotEmpty()) {
+                                togglePageSelection(page)
+                            } else {
+                                onPageClick(page)
                             }
                         }
                 ) {
