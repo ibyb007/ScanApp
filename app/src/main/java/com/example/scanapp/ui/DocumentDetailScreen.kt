@@ -3,7 +3,10 @@ package com.example.scanapp.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -59,6 +62,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import coil.compose.rememberAsyncImagePainter
 import com.example.scanapp.export.OutputFormat
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 private const val GRID_COLUMNS = 2
@@ -397,36 +402,40 @@ fun DocumentDetailScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .pointerInput(page.pageId, orderedPages.size) {
-                            // A long press either (a) selects the page, if the
-                            // finger never moves, or (b) drags/reorders it, if
-                            // it does — so one gesture drives both features
-                            // without them fighting each other.
-                            var moved = false
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    moved = false
-                                    dragOffset = Offset.Zero
-                                    draggingPageId = page.pageId
-                                },
-                                onDragEnd = {
-                                    draggingPageId = null
-                                    dragOffset = Offset.Zero
-                                    if (moved) {
-                                        onReorder(orderedPages.map { it.pageId })
-                                    } else if (selectedPageIds.isNotEmpty()) {
+                            // A single gesture recognizer drives taps, long-press-to-select,
+                            // and long-press-to-drag together, so they can't double-fire on
+                            // the same touch stream the way two independent detectors
+                            // (pointerInput + clickable) used to.
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+
+                                // Race: did the finger lift before the long-press
+                                // timeout, or is it still down once the timeout hits?
+                                val upBeforeLongPress = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                    waitForUpOrCancellation()
+                                }
+
+                                if (upBeforeLongPress != null) {
+                                    // Released quickly, no movement: a plain tap.
+                                    if (selectedPageIds.isNotEmpty()) {
                                         togglePageSelection(page)
                                     } else {
-                                        selectedPageIds = setOf(page.pageId)
+                                        onPageClick(page)
                                     }
-                                },
-                                onDragCancel = {
-                                    draggingPageId = null
-                                    dragOffset = Offset.Zero
-                                },
-                                onDrag = { change, delta ->
+                                    return@awaitEachGesture
+                                }
+
+                                // Long-press recognized and finger is still down. Enter
+                                // drag tracking; if it never actually moves, treat the
+                                // eventual release as a selection toggle instead.
+                                var moved = false
+                                dragOffset = Offset.Zero
+                                draggingPageId = page.pageId
+
+                                drag(down.id) { change ->
                                     moved = true
                                     change.consume()
-                                    dragOffset += delta
+                                    dragOffset += change.positionChange()
 
                                     if (cellWidthPx > 0 && cellHeightPx > 0) {
                                         val colShift = (dragOffset.x / cellWidthPx).roundToInt()
@@ -451,10 +460,17 @@ fun DocumentDetailScreen(
                                         }
                                     }
                                 }
-                            )
-                        }
-                        .clickable {
-                            if (selectedPageIds.isNotEmpty()) togglePageSelection(page) else onPageClick(page)
+
+                                draggingPageId = null
+                                dragOffset = Offset.Zero
+                                if (moved) {
+                                    onReorder(orderedPages.map { it.pageId })
+                                } else if (selectedPageIds.isNotEmpty()) {
+                                    togglePageSelection(page)
+                                } else {
+                                    selectedPageIds = setOf(page.pageId)
+                                }
+                            }
                         }
                 ) {
                     Image(
