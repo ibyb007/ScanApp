@@ -76,6 +76,15 @@ import kotlin.math.roundToInt
 
 private const val GRID_COLUMNS = 2
 
+// Used to distinguish "the long-press timeout genuinely elapsed" from
+// "waitForUpOrCancellation() returned null because something else (like
+// grid scrolling) claimed the gesture" — both would otherwise collapse to
+// a bare null and be indistinguishable.
+private sealed class RaceResult {
+    data object TimedOut : RaceResult()
+    data class Released(val change: androidx.compose.ui.input.pointer.PointerInputChange?) : RaceResult()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DocumentDetailScreen(
@@ -407,27 +416,42 @@ fun DocumentDetailScreen(
                             // the same touch stream the way two independent detectors
                             // (pointerInput + clickable) used to.
                             awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val down = awaitFirstDown()
 
-                                // Race: did the finger lift before the long-press
-                                // timeout, or is it still down once the timeout hits?
-                                val upBeforeLongPress = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                                    waitForUpOrCancellation()
-                                }
+                                // Race the long-press timeout against the finger lifting
+                                // or the gesture being claimed by something else (e.g. the
+                                // grid's own scrolling). withTimeoutOrNull's "null" and
+                                // waitForUpOrCancellation's "null" both collapse to null if
+                                // handled naively, so they're wrapped to stay distinguishable:
+                                // TimedOut = long press recognized; Released(null) = someone
+                                // else (scroll) claimed the gesture, so we back off entirely.
+                                val raceResult = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                    RaceResult.Released(waitForUpOrCancellation())
+                                } ?: RaceResult.TimedOut
 
-                                if (upBeforeLongPress != null) {
-                                    // Released quickly, no movement: a plain tap.
-                                    if (selectedPageIds.isNotEmpty()) {
-                                        togglePageSelection(page)
-                                    } else {
-                                        onPageClick(page)
+                                when (raceResult) {
+                                    is RaceResult.Released -> {
+                                        val upChange = raceResult.change
+                                        if (upChange != null) {
+                                            // Released quickly, no movement: a plain tap.
+                                            if (selectedPageIds.isNotEmpty()) {
+                                                togglePageSelection(page)
+                                            } else {
+                                                onPageClick(page)
+                                            }
+                                        }
+                                        // upChange == null means the gesture was claimed by
+                                        // something else (e.g. the grid started scrolling) —
+                                        // nothing to do, let it go.
+                                        return@awaitEachGesture
                                     }
-                                    return@awaitEachGesture
+                                    RaceResult.TimedOut -> {
+                                        // Long-press recognized and finger is still down.
+                                    }
                                 }
 
-                                // Long-press recognized and finger is still down. Enter
-                                // drag tracking; if it never actually moves, treat the
-                                // eventual release as a selection toggle instead.
+                                // Enter drag tracking; if it never actually moves, treat
+                                // the eventual release as a selection toggle instead.
                                 var moved = false
                                 dragOffset = Offset.Zero
                                 draggingPageId = page.pageId
