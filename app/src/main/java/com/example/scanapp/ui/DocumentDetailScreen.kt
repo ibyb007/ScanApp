@@ -1,7 +1,6 @@
 package com.example.scanapp.ui
 
 import android.net.Uri
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,7 +16,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Share // Swapped to the universally supported Share icon
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -56,7 +55,7 @@ fun DocumentDetailScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Main Scanned Pages Document Grid Layout View
+        // Main Scanned Pages Document Grid Layout View[cite: 1]
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             modifier = Modifier.fillMaxSize(),
@@ -85,7 +84,7 @@ fun DocumentDetailScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // Top Left Floating Page Counter Index Badge Bubble
+                    // Top Left Floating Page Counter Index Badge Bubble[cite: 1]
                     Surface(
                         color = Color.Black.copy(alpha = 0.5f),
                         shape = CircleShape,
@@ -104,7 +103,7 @@ fun DocumentDetailScreen(
                         }
                     }
 
-                    // Top Right Page Contextual Delete Option Circular Icon
+                    // Top Right Page Contextual Delete Option Circular Icon[cite: 1]
                     Surface(
                         color = Color.Black.copy(alpha = 0.5f),
                         shape = CircleShape,
@@ -127,7 +126,7 @@ fun DocumentDetailScreen(
             }
         }
 
-        // 1. Liquid Glass Top Navigation Bar Configuration Overlay
+        // 1. Liquid Glass Top Navigation Bar Configuration Overlay[cite: 1]
         Surface(
             color = Color.Transparent,
             modifier = Modifier
@@ -184,7 +183,7 @@ fun DocumentDetailScreen(
             }
         }
 
-        // 2. Liquid Glass Unified Bottom Actions Bar Menu Overlay Dock
+        // 2. Liquid Glass Unified Bottom Actions Bar Menu Overlay Dock[cite: 1]
         Surface(
             color = Color.Transparent,
             modifier = Modifier
@@ -207,7 +206,7 @@ fun DocumentDetailScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Left "Add pages" Action Button Inside the Dock
+                    // Left "Add pages" Action Button Inside the Dock[cite: 1]
                     Button(
                         onClick = onAddPagesClick,
                         colors = ButtonDefaults.buttonColors(
@@ -232,7 +231,7 @@ fun DocumentDetailScreen(
                         )
                     }
 
-                    // Right "Export" Action Button Inside the Dock
+                    // Right "Export" Action Button Inside the Dock[cite: 1]
                     Button(
                         onClick = onExportClick,
                         colors = ButtonDefaults.buttonColors(
