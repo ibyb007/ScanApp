@@ -3,7 +3,9 @@ package com.example.scanapp.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -58,15 +60,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.fastAny
+import androidx.compose.ui.util.fastFirstOrNull
 import androidx.compose.ui.zIndex
 import coil.compose.rememberAsyncImagePainter
 import com.example.scanapp.export.OutputFormat
+import kotlinx.coroutines.withTimeout
 import kotlin.math.roundToInt
 
 private const val GRID_COLUMNS = 2
@@ -376,7 +384,6 @@ fun DocumentDetailScreen(
             itemsIndexed(orderedPages, key = { _, page -> page.pageId }) { index, page ->
                 val isDragging = draggingPageId == page.pageId
                 val isSelected = selectedPageIds.contains(page.pageId)
-                var suppressNextClick by remember { mutableStateOf(false) }
 
                 Box(
                     modifier = Modifier
@@ -398,52 +405,61 @@ fun DocumentDetailScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .pointerInput(page.pageId, orderedPages.size) {
-                            // A long press either (a) selects the page, if the
-                            // finger never moves, or (b) drags/reorders it, if
-                            // it does. detectDragGesturesAfterLongPress already
-                            // correctly defers to ancestor scrolling for plain
-                            // drags/scrolls and ignores quick taps entirely, so
-                            // it's left untouched. The only thing it can't do is
-                            // stop the sibling .clickable from also firing when
-                            // the long press ends with no movement — that's
-                            // handled below with suppressNextClick, which gets
-                            // set the moment the long press is recognized
-                            // (~500ms before the eventual release), so its value
-                            // is already settled by the time that release event
-                            // is dispatched, regardless of dispatch order.
-                            var moved = false
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    moved = false
-                                    dragOffset = Offset.Zero
-                                    draggingPageId = page.pageId
-                                    suppressNextClick = true
-                                },
-                                onDragEnd = {
-                                    draggingPageId = null
-                                    dragOffset = Offset.Zero
-                                    if (moved) {
-                                        onReorder(orderedPages.map { it.pageId })
-                                    } else if (selectedPageIds.isNotEmpty()) {
+                            // A single gesture recognizer drives taps, long-press-to-select,
+                            // and long-press-to-drag together, so they can't double-fire on
+                            // the same touch stream the way two independent detectors
+                            // (pointerInput + clickable) used to.
+                            //
+                            // The long press itself is detected with a manual event loop
+                            // wrapped in withTimeout — the same technique Compose's own
+                            // detectDragGesturesAfterLongPress uses internally — rather than
+                            // delegating to waitForUpOrCancellation() from inside a
+                            // withTimeoutOrNull. That combination left drag() unable to see
+                            // any further pointer movement once the timeout fired.
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+
+                                var longPressed = false
+                                try {
+                                    withTimeout(viewConfiguration.longPressTimeoutMillis) {
+                                        while (true) {
+                                            val event = awaitPointerEvent(PointerEventPass.Main)
+                                            val change = event.changes.fastFirstOrNull { it.id == down.id }
+                                            if (change == null || !change.pressed) {
+                                                // Released before the timeout: a plain tap.
+                                                return@withTimeout
+                                            }
+                                            if (event.changes.fastAny { it.isConsumed }) {
+                                                // Claimed by something else, e.g. the grid
+                                                // started scrolling — back off entirely.
+                                                return@withTimeout
+                                            }
+                                        }
+                                    }
+                                } catch (timeout: PointerEventTimeoutCancellationException) {
+                                    longPressed = true
+                                }
+
+                                if (!longPressed) {
+                                    if (selectedPageIds.isNotEmpty()) {
                                         togglePageSelection(page)
                                     } else {
-                                        selectedPageIds = setOf(page.pageId)
+                                        onPageClick(page)
                                     }
-                                    // Covers the "moved" case, where the sibling
-                                    // clickable's own touch-slop tracking already
-                                    // cancelled its click and never consumed the
-                                    // flag itself.
-                                    suppressNextClick = false
-                                },
-                                onDragCancel = {
-                                    draggingPageId = null
-                                    dragOffset = Offset.Zero
-                                    suppressNextClick = false
-                                },
-                                onDrag = { change, delta ->
+                                    return@awaitEachGesture
+                                }
+
+                                // Long press recognized and finger is still down. Enter drag
+                                // tracking; if it never actually moves, treat the eventual
+                                // release as a selection toggle instead.
+                                var moved = false
+                                dragOffset = Offset.Zero
+                                draggingPageId = page.pageId
+
+                                drag(down.id) { change ->
                                     moved = true
                                     change.consume()
-                                    dragOffset += delta
+                                    dragOffset += change.positionChange()
 
                                     if (cellWidthPx > 0 && cellHeightPx > 0) {
                                         val colShift = (dragOffset.x / cellWidthPx).roundToInt()
@@ -468,18 +484,16 @@ fun DocumentDetailScreen(
                                         }
                                     }
                                 }
-                            )
-                        }
-                        .clickable {
-                            if (suppressNextClick) {
-                                // A stationary long press already handled this
-                                // release as a selection toggle; swallow the
-                                // click that the platform also generated for it.
-                                suppressNextClick = false
-                            } else if (selectedPageIds.isNotEmpty()) {
-                                togglePageSelection(page)
-                            } else {
-                                onPageClick(page)
+
+                                draggingPageId = null
+                                dragOffset = Offset.Zero
+                                if (moved) {
+                                    onReorder(orderedPages.map { it.pageId })
+                                } else if (selectedPageIds.isNotEmpty()) {
+                                    togglePageSelection(page)
+                                } else {
+                                    selectedPageIds = setOf(page.pageId)
+                                }
                             }
                         }
                 ) {
