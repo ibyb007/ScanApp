@@ -161,6 +161,11 @@ class MainActivity : ComponentActivity() {
     private var checkUpdatesOnStart by mutableStateOf(true)
     private var autoInstallUpdates by mutableStateOf(false)
 
+    // Opacity of the liquid glass bottom nav (ScanAppBottomNav), tunable
+    // from the Settings screen and persisted via NavBarPreferences so it
+    // survives app restarts.
+    private var navBarGlassOpacity by mutableStateOf(com.example.scanapp.ui.NavBarPreferences.DEFAULT_GLASS_OPACITY)
+
     private var showUpdateAvailableDialog by mutableStateOf(false)
     private var startupUpdateVersion by mutableStateOf("")
     private var startupUpdateChangelog by mutableStateOf<List<String>>(emptyList())
@@ -230,6 +235,7 @@ class MainActivity : ComponentActivity() {
         checkUpdatesOnStart = com.example.scanapp.update.UpdatePreferences.isCheckOnStartEnabled(applicationContext)
         autoInstallUpdates = com.example.scanapp.update.UpdatePreferences.isAutoInstallEnabled(applicationContext)
         darkThemeOverride = com.example.scanapp.ui.ThemePreferences.getDarkOverride(applicationContext)
+        navBarGlassOpacity = com.example.scanapp.ui.NavBarPreferences.getGlassOpacity(applicationContext)
         homeSortBy = com.example.scanapp.data.SortPreferences.getSortBy(applicationContext)
         homeSortDirection = com.example.scanapp.data.SortPreferences.getSortDirection(applicationContext)
         if (checkUpdatesOnStart) {
@@ -397,6 +403,7 @@ class MainActivity : ComponentActivity() {
                         onBackupClick = { currentScreen = Screen.BACKUP },
                         themeMode = darkThemeOverride.toThemeMode(),
                         listState = homeListState,
+                        navBarGlassOpacity = navBarGlassOpacity,
                         onThemeModeSelected = { newMode, tapCenter ->
                             val newOverride = newMode.toDarkOverride()
                             val newEffectiveDarkTheme = newOverride ?: systemDarkTheme
@@ -512,6 +519,11 @@ class MainActivity : ComponentActivity() {
                             autoInstallUpdates = enabled
                             com.example.scanapp.update.UpdatePreferences.setAutoInstallEnabled(applicationContext, enabled)
                         },
+                        navBarGlassOpacity = navBarGlassOpacity,
+                        onNavBarGlassOpacityChange = { opacity ->
+                            navBarGlassOpacity = opacity
+                            com.example.scanapp.ui.NavBarPreferences.setGlassOpacity(applicationContext, opacity)
+                        },
                         onBackClick = { currentScreen = Screen.HOME },
                         onHomeClick = { currentScreen = Screen.HOME },
                         onToolsClick = { openCollageScreen() },
@@ -526,7 +538,8 @@ class MainActivity : ComponentActivity() {
                         },
                         onHomeClick = { currentScreen = Screen.HOME },
                         onSettingsClick = { currentScreen = Screen.SETTINGS },
-                        onBackupClick = { currentScreen = Screen.BACKUP }
+                        onBackupClick = { currentScreen = Screen.BACKUP },
+                        navBarGlassOpacity = navBarGlassOpacity
                     )
                 Screen.BACKUP -> {
                     val savedTelegramCreds = com.example.scanapp.backup.BackupEngine.getTelegramCredentials(applicationContext)
@@ -549,7 +562,8 @@ class MainActivity : ComponentActivity() {
                         telegramActivity = telegramActivity,
                         onHomeClick = { currentScreen = Screen.HOME },
                         onToolsClick = { openCollageScreen() },
-                        onSettingsClick = { currentScreen = Screen.SETTINGS }
+                        onSettingsClick = { currentScreen = Screen.SETTINGS },
+                        navBarGlassOpacity = navBarGlassOpacity
                     )
                 }
                 }
