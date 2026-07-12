@@ -30,7 +30,7 @@ plugins {
 // workflow tags each release from this exact value — see
 // .github/workflows/build.yml.
 val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
-val appVersionName = "1.1.9"
+val appVersionName = "1.2.0"
 
 android {
     namespace = "com.example.scanapp"
