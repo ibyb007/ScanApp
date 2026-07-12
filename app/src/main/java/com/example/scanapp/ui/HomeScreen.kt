@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -13,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -37,8 +39,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -91,7 +96,8 @@ fun HomeScreen(
     onBackupClick: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.AUTO,
     onThemeModeSelected: (ThemeMode, Offset) -> Unit = { _, _ -> },
-    listState: LazyListState = rememberLazyListState()
+    listState: LazyListState = rememberLazyListState(),
+    navBarGlassOpacity: Float = NavBarPreferences.DEFAULT_GLASS_OPACITY
 ) {
     var actionSheetTarget by remember { mutableStateOf<RecentDocument?>(null) }
     var renameTarget by remember { mutableStateOf<RecentDocument?>(null) }
@@ -425,6 +431,7 @@ fun HomeScreen(
                 onSettingsClick = onSettingsClick,
                 onToolsClick = onToolsClick,
                 onBackupClick = onBackupClick,
+                glassOpacity = navBarGlassOpacity,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onGloballyPositioned { navBarHeightPx = it.size.height }
@@ -699,10 +706,21 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier, isSearching: Boolea
     }
 }
 
+/**
+ * The floating bottom nav, shared by every top-level screen (Home, Collage,
+ * Backup, Settings). Rendered as "liquid glass": a translucent, tinted pill
+ * with a bright top sheen, a soft diagonal highlight streak, a light rim
+ * border, and a small blurred shine blob near the top-left corner — the
+ * combination reads as a curved glass surface catching light rather than a
+ * flat painted bar. [glassOpacity] (0 = almost see-through, 1 = fully
+ * opaque) is user-controlled from the Settings screen and persisted via
+ * [NavBarPreferences].
+ */
 @Composable
 internal fun ScanAppBottomNav(
     modifier: Modifier = Modifier,
     selectedIndex: Int = 0,
+    glassOpacity: Float = NavBarPreferences.DEFAULT_GLASS_OPACITY,
     onHomeClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
     onToolsClick: () -> Unit = {},
@@ -715,38 +733,100 @@ internal fun ScanAppBottomNav(
         Triple("Settings", Icons.Filled.Settings, 3)
     )
 
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 0.dp,
-        windowInsets = WindowInsets(0, 0, 0, 0),
+    val shape = RoundedCornerShape(28.dp)
+    val glassTint = MaterialTheme.colorScheme.surfaceContainer
+    val opacity = glassOpacity.coerceIn(
+        NavBarPreferences.MIN_GLASS_OPACITY,
+        NavBarPreferences.MAX_GLASS_OPACITY
+    )
+
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .height(68.dp)
-            .clip(RoundedCornerShape(28.dp))
-    ) {
-        items.forEach { (label, icon, index) ->
-            NavigationBarItem(
-                selected = selectedIndex == index,
-                onClick = {
-                    when (index) {
-                        0 -> onHomeClick()
-                        1 -> onToolsClick()
-                        2 -> onBackupClick()
-                        3 -> onSettingsClick()
-                    }
-                },
-                icon = { Icon(icon, contentDescription = label) },
-                label = { Text(label) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+            .clip(shape)
+            // Base glass fill plus two light sheens — a broad one from the
+            // top edge and a narrower diagonal streak — so the tint reads
+            // as light passing through curved glass rather than a flat
+            // translucent rectangle.
+            .drawBehind {
+                drawRect(glassTint.copy(alpha = opacity))
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.24f * opacity),
+                            Color.Transparent
+                        ),
+                        endY = size.height * 0.8f
+                    )
                 )
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = 0.16f * opacity),
+                            Color.Transparent
+                        ),
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width * 0.65f, 0f)
+                    )
+                )
+            }
+            .border(
+                width = 1.dp,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.55f),
+                        Color.White.copy(alpha = 0.06f)
+                    )
+                ),
+                shape = shape
             )
+    ) {
+        // Small soft shine near the top-left corner, like a highlight
+        // curving across a glass bead. Modifier.blur only takes effect on
+        // API 31+ (RenderEffect); below that it degrades gracefully to a
+        // plain soft-edged translucent patch, which still reads as a
+        // highlight, so no version check is needed here.
+        Box(
+            modifier = Modifier
+                .size(width = 96.dp, height = 34.dp)
+                .align(Alignment.TopStart)
+                .offset(x = 4.dp, y = (-10).dp)
+                .blur(28.dp)
+                .background(Color.White.copy(alpha = 0.32f * opacity), CircleShape)
+        )
+
+        NavigationBar(
+            containerColor = Color.Transparent,
+            tonalElevation = 0.dp,
+            windowInsets = WindowInsets(0, 0, 0, 0),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items.forEach { (label, icon, index) ->
+                NavigationBarItem(
+                    selected = selectedIndex == index,
+                    onClick = {
+                        when (index) {
+                            0 -> onHomeClick()
+                            1 -> onToolsClick()
+                            2 -> onBackupClick()
+                            3 -> onSettingsClick()
+                        }
+                    },
+                    icon = { Icon(icon, contentDescription = label) },
+                    label = { Text(label) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                )
+            }
         }
     }
 }
