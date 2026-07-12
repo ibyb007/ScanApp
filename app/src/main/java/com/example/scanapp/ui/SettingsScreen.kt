@@ -23,14 +23,19 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NewReleases
+import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -62,6 +67,8 @@ fun SettingsScreen(
     onCheckUpdatesOnStartChange: (Boolean) -> Unit = {},
     autoInstallUpdates: Boolean = false,
     onAutoInstallUpdatesChange: (Boolean) -> Unit = {},
+    navBarGlassOpacity: Float = NavBarPreferences.DEFAULT_GLASS_OPACITY,
+    onNavBarGlassOpacityChange: (Float) -> Unit = {},
     onBackClick: () -> Unit,
     onHomeClick: () -> Unit = {},
     onToolsClick: () -> Unit = {},
@@ -229,6 +236,22 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
 
+            SectionLabel("Appearance")
+            Spacer(Modifier.height(4.dp))
+
+            // Bottom Navbar Glass Opacity — controls how see-through the
+            // liquid glass bottom nav (ScanAppBottomNav) reads on every
+            // screen it appears on: Home, Tools, Backup, and this screen.
+            // Lower = more transparent/frosted, higher = more solid.
+            NavBarGlassOpacityRow(
+                opacity = navBarGlassOpacity,
+                onOpacityChange = onNavBarGlassOpacityChange
+            )
+
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+
             SectionLabel("Developer")
             Spacer(Modifier.height(4.dp))
 
@@ -246,12 +269,80 @@ fun SettingsScreen(
             onToolsClick = onToolsClick,
             onBackupClick = onBackupClick,
             onSettingsClick = {},
+            glassOpacity = navBarGlassOpacity,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .onGloballyPositioned { navBarHeightPx = it.size.height }
         )
         }
     }
+}
+
+/**
+ * Slider row controlling how see-through the liquid glass bottom nav is.
+ * Lives in its own [ListItem]-style row so it lines up visually with the
+ * switches above it, with a live percentage readout and a mini preview
+ * pill that mirrors the same background treatment as [ScanAppBottomNav]
+ * so the effect is visible without leaving the Settings screen.
+ */
+@Composable
+private fun NavBarGlassOpacityRow(
+    opacity: Float,
+    onOpacityChange: (Float) -> Unit
+) {
+    Column(modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)) {
+        ListItem(
+            headlineContent = { Text("Bottom Navbar Glass Opacity") },
+            supportingContent = { Text("How see-through the liquid glass bottom bar looks") },
+            leadingContent = {
+                Icon(Icons.Filled.Opacity, contentDescription = null)
+            },
+            trailingContent = {
+                Text(
+                    "${(opacity * 100).toInt()}%",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        ) {
+            Slider(
+                value = opacity,
+                onValueChange = onOpacityChange,
+                valueRange = NavBarPreferences.MIN_GLASS_OPACITY..NavBarPreferences.MAX_GLASS_OPACITY,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(12.dp))
+            // Small live preview so the "liquid glass" look is visible
+            // right here, using the same base tint the real nav bar uses.
+            Box(
+                modifier = Modifier
+                    .size(width = 44.dp, height = 28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .drawWithBackground(
+                        baseColor = MaterialTheme.colorScheme.surfaceContainer,
+                        opacity = opacity
+                    )
+            )
+        }
+    }
+}
+
+/** Draws the same translucent base + top sheen used by [ScanAppBottomNav], for the mini preview swatch. */
+private fun Modifier.drawWithBackground(baseColor: Color, opacity: Float): Modifier = this.drawBehind {
+    drawRect(baseColor.copy(alpha = opacity))
+    drawRect(
+        brush = Brush.verticalGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.24f * opacity),
+                Color.Transparent
+            ),
+            endY = size.height * 0.8f
+        )
+    )
 }
 
 @Composable
