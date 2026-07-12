@@ -1,621 +1,679 @@
 package com.example.scanapp.ui
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.NewReleases
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Reorder
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
+import androidx.compose.ui.zIndex
+import coil.compose.rememberAsyncImagePainter
+import com.example.scanapp.export.OutputFormat
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 
-/** What the update-check row should currently show. */
-enum class UpdateCheckUiStatus { IDLE, CHECKING, UP_TO_DATE, UPDATE_AVAILABLE, ERROR }
+private const val GRID_COLUMNS = 2
+
+// Used to distinguish "the long-press timeout genuinely elapsed" from
+// "waitForUpOrCancellation() returned null because something else (like
+// grid scrolling) claimed the gesture" — both would otherwise collapse to
+// a bare null and be indistinguishable.
+private sealed class RaceResult {
+    data object TimedOut : RaceResult()
+    data class Released(val change: androidx.compose.ui.input.pointer.PointerInputChange?) : RaceResult()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(
-    versionName: String,
-    versionCode: Int,
-    updateStatus: UpdateCheckUiStatus,
-    updateStatusMessage: String? = null,
-    onCheckForUpdateClick: () -> Unit,
-    onOpenReleaseClick: () -> Unit = {},
-    checkUpdatesOnStart: Boolean = true,
-    onCheckUpdatesOnStartChange: (Boolean) -> Unit = {},
-    autoInstallUpdates: Boolean = false,
-    onAutoInstallUpdatesChange: (Boolean) -> Unit = {},
+fun DocumentDetailScreen(
+    title: String,
+    pages: List<DetailPage>,
     onBackClick: () -> Unit,
-    onHomeClick: () -> Unit = {},
-    onToolsClick: () -> Unit = {},
-    onBackupClick: () -> Unit = {}
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+    onShare: (OutputFormat) -> Unit,
+    onExportClick: () -> Unit,
+    onPageClick: (DetailPage) -> Unit,
+    onAddPagesClick: () -> Unit,
+    onDeletePage: (DetailPage) -> Unit,
+    onReorder: (List<Long>) -> Unit,
+    onExportSelected: (List<DetailPage>) -> Unit,
+    onEditSelected: (List<DetailPage>) -> Unit
 ) {
-    // ScanAppBottomNav is overlaid on the content Box below instead of
-    // living in Scaffold's bottomBar slot — see HomeScreen for why.
-    var navBarHeightPx by remember { mutableStateOf(0) }
-    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+    // Local, instantly-reorderable copy of the pages. Kept in sync whenever a
+    // new list comes down from the caller (pages added/removed/refreshed).
+    var orderedPages by remember(pages) { mutableStateOf(pages) }
+
+    var selectedPageIds by remember { mutableStateOf(emptySet<Long>()) }
+    val isSelecting = selectedPageIds.isNotEmpty()
+    var isReordering by remember { mutableStateOf(false) }
+
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
+
+    // Measured once from the first grid cell, used to translate a drag's
+    // pixel offset into "how many grid slots did this move" for reordering.
+    var cellWidthPx by remember { mutableStateOf(0) }
+    var cellHeightPx by remember { mutableStateOf(0) }
+    var draggingPageId by remember { mutableStateOf<Long?>(null) }
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
+
+    fun togglePageSelection(page: DetailPage) {
+        selectedPageIds = if (selectedPageIds.contains(page.pageId)) {
+            selectedPageIds - page.pageId
+        } else {
+            selectedPageIds + page.pageId
+        }
+    }
+
+    // Intercepts the system back button/gesture too, not just the in-app
+    // arrow icon — without this, hardware/gesture back skips isSelecting
+    // and isReordering entirely and falls straight through to onBackClick.
+    BackHandler(enabled = isSelecting || isReordering) {
+        when {
+            isSelecting -> selectedPageIds = emptySet()
+            isReordering -> isReordering = false
+        }
+    }
 
     Scaffold(
-        // See HomeScreen: stop Scaffold from painting an opaque
-        // system-bar-height strip behind the floating bottom nav pill.
+        containerColor = MaterialTheme.colorScheme.background,
+        // We handle status/navigation bar insets ourselves inside the bars
+        // below, so Scaffold shouldn't reserve extra space for them too.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    // Settings gear — this screen IS the settings screen; kept as
-                    // a visible icon since more settings (theme, default export
-                    // format, etc.) will likely be added here later.
-                    IconButton(onClick = { /* already on the settings screen */ }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-        ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp + navBarHeightDp)
-        ) {
-            SectionLabel("General")
-            Spacer(Modifier.height(4.dp))
-
-            // Check for update
-            ListItem(
-                headlineContent = { Text("Check for update") },
-                supportingContent = {
-                    Text(
-                        text = when (updateStatus) {
-                            UpdateCheckUiStatus.IDLE -> "Tap to check for the latest version"
-                            UpdateCheckUiStatus.CHECKING -> "Checking…"
-                            UpdateCheckUiStatus.UP_TO_DATE -> "You're on the latest version"
-                            UpdateCheckUiStatus.UPDATE_AVAILABLE -> updateStatusMessage ?: "A new version is available"
-                            UpdateCheckUiStatus.ERROR -> updateStatusMessage ?: "Couldn't check for updates"
-                        },
-                        color = when (updateStatus) {
-                            UpdateCheckUiStatus.UPDATE_AVAILABLE -> MaterialTheme.colorScheme.primary
-                            UpdateCheckUiStatus.ERROR -> MaterialTheme.colorScheme.error
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    )
-                },
-                leadingContent = {
-                    // One icon, swapped per state — never more than one
-                    // loading/status indicator visible on this row at a time.
-                    when (updateStatus) {
-                        UpdateCheckUiStatus.CHECKING -> {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        }
-                        UpdateCheckUiStatus.UP_TO_DATE -> {
+            // 1. Liquid Glass Top Navigation Bar Configuration Overlay[cite: 1]
+            Surface(
+                color = Color.Transparent,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.45f),
+                    shape = RoundedCornerShape(24.dp),
+                    tonalElevation = 6.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                when {
+                                    isSelecting -> selectedPageIds = emptySet()
+                                    isReordering -> isReordering = false
+                                    else -> onBackClick()
+                                }
+                            }
+                        ) {
                             Icon(
-                                Icons.Filled.CheckCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
+                                imageVector = if (isSelecting || isReordering) Icons.Filled.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = if (isSelecting || isReordering) "Cancel" else "Back",
+                                tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        UpdateCheckUiStatus.UPDATE_AVAILABLE -> {
-                            Icon(
-                                Icons.Filled.NewReleases,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        UpdateCheckUiStatus.ERROR -> {
-                            Icon(
-                                Icons.Filled.ErrorOutline,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        UpdateCheckUiStatus.IDLE -> {
-                            Icon(Icons.Filled.Refresh, contentDescription = null)
-                        }
-                    }
-                },
-                trailingContent = {
-                    when (updateStatus) {
-                        UpdateCheckUiStatus.UPDATE_AVAILABLE -> {
-                            Button(onClick = onOpenReleaseClick) { Text("Update") }
-                        }
-                        UpdateCheckUiStatus.CHECKING -> {
-                            // No trailing icon while checking — the leading
-                            // spinner is already the single loading indicator
-                            // for this row. Previously a refresh IconButton
-                            // (merely disabled, not hidden) sat here too, so
-                            // the row showed what looked like two separate
-                            // loading spinners side by side during a check.
-                        }
-                        else -> {
-                            IconButton(onClick = onCheckForUpdateClick) {
-                                Icon(Icons.Filled.Refresh, contentDescription = "Check now")
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = when {
+                                isSelecting -> "${selectedPageIds.size} selected"
+                                isReordering -> "Reordering"
+                                else -> title
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (isReordering) {
+                            IconButton(onClick = { isReordering = false }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = "Done reordering",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        } else if (isSelecting) {
+                            IconButton(
+                                onClick = {
+                                    val selectedPages = orderedPages.filter { selectedPageIds.contains(it.pageId) }
+                                    selectedPages.forEach { onDeletePage(it) }
+                                    selectedPageIds = emptySet()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = "Delete selected",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        } else {
+                            IconButton(onClick = { isReordering = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Reorder,
+                                    contentDescription = "Reorder pages",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = { showRenameDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Edit,
+                                    contentDescription = "Rename",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Box {
+                                IconButton(onClick = { showOverflowMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.MoreVert,
+                                        contentDescription = "Options",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showOverflowMenu,
+                                    onDismissRequest = { showOverflowMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Share as PDF") },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Share, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            onShare(OutputFormat.PDF)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Share as JPEG") },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Share, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            onShare(OutputFormat.JPEG)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Share as PNG") },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Share, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            onShare(OutputFormat.PNG)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Delete document") },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Delete, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            showDeleteConfirm = true
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
-                },
-                modifier = Modifier.clickable(
-                    enabled = updateStatus != UpdateCheckUiStatus.CHECKING
-                ) { onCheckForUpdateClick() }
-            )
-
-            // Version info
-            ListItem(
-                headlineContent = { Text("Version") },
-                supportingContent = { Text("$versionName (build $versionCode)") },
-                leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) }
-            )
-
-            // Check Updates on Start — silently checks GitHub Releases once
-            // at launch and shows the standard "update available" popup if
-            // a newer release is found, independent of this row's own
-            // "Check for update" status above (which only reflects manual
-            // taps, not this background check).
-            ListItem(
-                headlineContent = { Text("Check Updates on Start") },
-                supportingContent = { Text("Automatically check for updates when app starts") },
-                trailingContent = {
-                    Switch(checked = checkUpdatesOnStart, onCheckedChange = onCheckUpdatesOnStartChange)
-                }
-            )
-
-            // Auto Install Updates — when the startup check (above) finds a
-            // newer release, downloads it and opens the system install
-            // prompt automatically rather than waiting for a tap on the
-            // popup's "Update now" button. Android still requires the
-            // person to confirm the actual install themselves — no API
-            // available to a normal app skips that — so this saves the
-            // download-and-open-prompt steps, not the final tap.
-            ListItem(
-                headlineContent = { Text("Auto Install Updates") },
-                supportingContent = { Text("Download and prompt to install automatically when found") },
-                trailingContent = {
-                    Switch(
-                        checked = autoInstallUpdates,
-                        onCheckedChange = onAutoInstallUpdatesChange,
-                        enabled = checkUpdatesOnStart
-                    )
-                }
-            )
-
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(8.dp))
-
-            SectionLabel("Developer")
-            Spacer(Modifier.height(4.dp))
-
-            DeveloperCreditLine()
-            Spacer(Modifier.height(4.dp))
-
-            DeveloperInfoSection()
-        }
-
-        // Overlaid on top of the scrolled content instead of reserved via
-        // Scaffold's bottomBar — see HomeScreen for the reasoning.
-        ScanAppBottomNav(
-            selectedIndex = 3,
-            onHomeClick = onHomeClick,
-            onToolsClick = onToolsClick,
-            onBackupClick = onBackupClick,
-            onSettingsClick = {},
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .onGloballyPositioned { navBarHeightPx = it.size.height }
-        )
-        }
-    }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold
-    )
-}
-
-/**
- * Credit shown in the Developer section: a colored truck emoji (🚛) tows the
- * "Bony Biswas" text in on a rope/chain from the right edge of the screen,
- * drags it into its resting spot, then drives on and exits off the left —
- * leaving only the settled text behind. The rope is tethered from the back
- * of the truck (its trailing side, since the truck is leading the tow
- * moving right-to-left). The truck puffs engine smoke the whole time it's
- * on screen, and while the text is being dragged it throws up a bit of
- * friction fire/sparks from scraping along the ground.
- */
-@Composable
-private fun DeveloperCreditLine() {
-    // 0f = tow just starting (text off-screen right), 1f = text fully
-    // settled at its resting spot. Overshoots slightly past 1 then rebounds,
-    // so the arrival reads as a yank-then-settle rather than a dead stop.
-    val progress = remember { Animatable(0f) }
-    // Extra distance the truck drives after letting go of the rope, added
-    // on top of its towing position — carries it off-screen to the left.
-    val truckExit = remember { Animatable(0f) }
-    val truckExitAlpha = remember { Animatable(1f) }
-    var showTruck by remember { mutableStateOf(true) }
-
-    // Continuous looping phases for the exhaust smoke and friction fire —
-    // always ticking so they're in sync whenever they're visible.
-    val fxTransition = rememberInfiniteTransition(label = "creditFx")
-    val smokePhase by fxTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(durationMillis = 1500, easing = LinearEasing)),
-        label = "smokePhase"
-    )
-    val firePhase by fxTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(durationMillis = 180, easing = LinearEasing)),
-        label = "firePhase"
-    )
-
-    LaunchedEffect(Unit) {
-        progress.animateTo(
-            targetValue = 1f,
-            animationSpec = keyframes {
-                durationMillis = 3200
-                0f at 0 using LinearOutSlowInEasing
-                1.08f at 2200 using FastOutSlowInEasing   // yanked in fast, overshoots the resting spot
-                0.96f at 2650 using FastOutSlowInEasing    // rebounds back
-                1f at 3200 using FastOutSlowInEasing       // settles
-            }
-        )
-        // Rope lets go once the text has settled — truck drives on alone
-        // and fades out as it exits.
-        coroutineScope {
-            launch {
-                truckExit.animateTo(
-                    targetValue = 650f,
-                    animationSpec = tween(durationMillis = 2200, easing = FastOutSlowInEasing)
-                )
-            }
-            launch {
-                truckExitAlpha.animateTo(
-                    targetValue = 0f,
-                    animationSpec = keyframes {
-                        durationMillis = 2200
-                        1f at 0
-                        1f at 1600
-                        0f at 2200   // fades out in the final stretch as it drives off
-                    }
-                )
-            }
-        }
-        showTruck = false
-    }
-
-    // Truck width and rope span are fixed estimates (not measured) — fine
-    // for a decorative rope/chain, since the truck's position is derived
-    // directly from the text's position so the gap between them stays
-    // visually consistent throughout the tow.
-    val textWidthDp = 150f
-    val truckWidthDp = 46f
-    val ropeSpanDp = 40f
-    val towLeadGapDp = truckWidthDp + ropeSpanDp
-    val towStartX = 1000f
-
-    val textLeftX = towStartX * (1f - progress.value)
-    // Truck leads the tow (it's to the text's left, moving further left as
-    // it goes), so its position is the text's position minus the gap — and
-    // once the rope lets go, minus the extra exit distance too.
-    val truckLeftX = textLeftX - towLeadGapDp - truckExit.value
-    val isDragging = progress.value < 0.98f
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 58.dp)
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-    ) {
-        if (showTruck) {
-            Canvas(modifier = Modifier.matchParentSize()) {
-                val ropeAlpha = (1f - (truckExit.value / 70f)).coerceIn(0f, 1f)
-                val groundY = size.height * 0.86f
-
-                // Rope/chain between the truck's back (its trailing/right
-                // edge, since it's leading the tow to the left) and the
-                // text's near edge — only visible while still attached,
-                // fades the instant the truck starts pulling away.
-                if (ropeAlpha > 0f) {
-                    drawTowRope(
-                        fromX = (truckLeftX + truckWidthDp).dp.toPx(),
-                        toX = textLeftX.dp.toPx(),
-                        y = groundY,
-                        alpha = ropeAlpha
-                    )
-                }
-
-                // Engine smoke puffing from the truck's back (its trailing
-                // right edge) the whole time it's on screen.
-                drawExhaustSmoke(
-                    anchorX = (truckLeftX + truckWidthDp).dp.toPx(),
-                    anchorY = size.height * 0.40f,
-                    phase = smokePhase
-                )
-
-                // Friction sparks/fire where the text is scraping along the
-                // ground while it's being dragged.
-                if (isDragging) {
-                    drawFrictionFire(
-                        fromX = textLeftX.dp.toPx(),
-                        toX = (textLeftX + textWidthDp).dp.toPx(),
-                        y = groundY,
-                        phase = firePhase
-                    )
                 }
             }
-
-            // Truck is deliberately larger than the text it's towing.
-            Text(
-                text = "🚛",
-                fontSize = 42.sp,
+        },
+        bottomBar = {
+            // 2. Liquid Glass Unified Bottom Actions Bar Menu Overlay Dock[cite: 1]
+            Surface(
+                color = Color.Transparent,
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .offset(x = truckLeftX.dp)
-                    .alpha(truckExitAlpha.value)
-            )
-        }
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 16.dp)
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.45f),
+                    shape = RoundedCornerShape(32.dp),
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (isReordering) {
+                            Text(
+                                text = "Drag a page to reorder it, then tap Done",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 14.dp)
+                            )
+                        } else if (isSelecting) {
+                            val selectedPages = orderedPages.filter { selectedPageIds.contains(it.pageId) }
 
-        Extruded3DText(
-            text = "Bony Biswas",
+                            // "Edit selected" Action Button Inside the Dock
+                            Button(
+                                onClick = { onEditSelected(selectedPages) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                                ),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Edit,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Edit",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+
+                            // "Export selected" Action Button Inside the Dock
+                            Button(
+                                onClick = { onExportSelected(selectedPages) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                ),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Share,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Export",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                        } else {
+                            // Left "Add pages" Action Button Inside the Dock[cite: 1]
+                            Button(
+                                onClick = onAddPagesClick,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                ),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Add pages",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+
+                            // Right "Export" Action Button Inside the Dock[cite: 1]
+                            Button(
+                                onClick = onExportClick,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                                ),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Share,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Export",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
+        // Main Scanned Pages Document Grid Layout View[cite: 1]
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(GRID_COLUMNS),
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .offset(x = textLeftX.dp, y = (-4).dp)
-        )
-    }
-}
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentPadding = PaddingValues(
+                top = innerPadding.calculateTopPadding() + 16.dp,
+                bottom = innerPadding.calculateBottomPadding() + 24.dp,
+                start = 12.dp,
+                end = 12.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            itemsIndexed(orderedPages, key = { _, page -> page.pageId }) { index, page ->
+                val isDragging = draggingPageId == page.pageId
+                val isSelected = selectedPageIds.contains(page.pageId)
 
-/** Draws a loosely sagging rope/chain between two ground-level points, with a few link/knot dots along it. */
-private fun DrawScope.drawTowRope(fromX: Float, toX: Float, y: Float, alpha: Float) {
-    if (toX <= fromX) return
-    val midX = (fromX + toX) / 2f
-    val path = Path().apply {
-        moveTo(fromX, y)
-        quadraticTo(midX, y + 10f, toX, y)
-    }
-    drawPath(
-        path = path,
-        color = Color(0xFF5B4636).copy(alpha = alpha),
-        style = Stroke(width = 5f, cap = StrokeCap.Round)
-    )
-    val linkCount = 4
-    for (i in 1 until linkCount) {
-        val t = i / linkCount.toFloat()
-        val x = fromX + (toX - fromX) * t
-        drawCircle(
-            color = Color(0xFF3A2E24).copy(alpha = alpha),
-            radius = 4f,
-            center = Offset(x, y + 10f * (4f * t * (1f - t)))
-        )
-    }
-}
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.72f)
+                        .onGloballyPositioned {
+                            if (cellWidthPx == 0) cellWidthPx = it.size.width
+                            if (cellHeightPx == 0) cellHeightPx = it.size.height
+                        }
+                        .graphicsLayer {
+                            if (isDragging) {
+                                translationX = dragOffset.x
+                                translationY = dragOffset.y
+                                scaleX = 1.04f
+                                scaleY = 1.04f
+                            }
+                        }
+                        .zIndex(if (isDragging) 1f else 0f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .pointerInput(page.pageId, orderedPages.size, isReordering) {
+                            if (isReordering) {
+                                // Dedicated reorder mode: dragging starts on ordinary touch
+                                // slop, no long-press needed, since entering this mode via
+                                // the header icon is already an explicit opt-in. No tap or
+                                // select handling runs here at all, so there's nothing left
+                                // to race against.
+                                detectDragGestures(
+                                    onDragStart = {
+                                        dragOffset = Offset.Zero
+                                        draggingPageId = page.pageId
+                                    },
+                                    onDragEnd = {
+                                        draggingPageId = null
+                                        dragOffset = Offset.Zero
+                                        onReorder(orderedPages.map { it.pageId })
+                                    },
+                                    onDragCancel = {
+                                        draggingPageId = null
+                                        dragOffset = Offset.Zero
+                                    },
+                                    onDrag = { change, delta ->
+                                        change.consume()
+                                        dragOffset += delta
 
-/** Small puffs drifting up and back from the truck's tailpipe, looping continuously while the truck is on screen. */
-private fun DrawScope.drawExhaustSmoke(anchorX: Float, anchorY: Float, phase: Float) {
-    repeat(3) { i ->
-        val t = (phase + i / 3f) % 1f
-        val rise = t * 40f
-        // Truck now faces and travels leftward, so its tailpipe trails
-        // smoke back to the right (opposite the direction of travel).
-        val drift = t * 26f
-        val alpha = (1f - t) * 0.55f
-        val radius = 6f + t * 10f
-        drawCircle(
-            color = Color(0xFF8C8C8C).copy(alpha = alpha),
-            radius = radius,
-            center = Offset(anchorX + drift, anchorY - rise)
-        )
-    }
-}
+                                        if (cellWidthPx > 0 && cellHeightPx > 0) {
+                                            val colShift = (dragOffset.x / cellWidthPx).roundToInt()
+                                            val rowShift = (dragOffset.y / cellHeightPx).roundToInt()
+                                            val shift = rowShift * GRID_COLUMNS + colShift
+                                            if (shift != 0) {
+                                                val fromIndex = orderedPages.indexOfFirst { it.pageId == page.pageId }
+                                                val toIndex = (fromIndex + shift).coerceIn(0, orderedPages.lastIndex)
+                                                if (toIndex != fromIndex) {
+                                                    orderedPages = orderedPages.toMutableList().apply {
+                                                        add(toIndex, removeAt(fromIndex))
+                                                    }
+                                                    // Compensate for the distance the swap just covered so
+                                                    // the drag keeps tracking the finger smoothly instead of
+                                                    // jumping.
+                                                    val consumedShift = toIndex - fromIndex
+                                                    dragOffset -= Offset(
+                                                        x = (consumedShift % GRID_COLUMNS) * cellWidthPx.toFloat(),
+                                                        y = (consumedShift / GRID_COLUMNS) * cellHeightPx.toFloat()
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+                            } else {
+                                // Normal browsing mode: tap to open/toggle, long press to
+                                // select. No dragging happens here at all anymore, so there's
+                                // nothing racing the selection logic.
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
 
-/** Small flickering flame tufts and spark dashes where the text scrapes the ground while being towed. */
-private fun DrawScope.drawFrictionFire(fromX: Float, toX: Float, y: Float, phase: Float) {
-    if (toX <= fromX) return
-    val tuftCount = 4
-    for (i in 0 until tuftCount) {
-        val baseT = i / (tuftCount - 1).toFloat()
-        val x = fromX + (toX - fromX) * baseT
-        val flicker = (phase + baseT * 0.6f) % 1f
-        val height = 10f + flicker * 14f
-        val sway = (flicker - 0.5f) * 8f
+                                    // Race the long-press timeout against the finger lifting
+                                    // or the gesture being claimed by something else (e.g. the
+                                    // grid's own scrolling). withTimeoutOrNull's "null" and
+                                    // waitForUpOrCancellation's "null" both collapse to null if
+                                    // handled naively, so they're wrapped to stay distinguishable:
+                                    // TimedOut = long press recognized; Released(null) = someone
+                                    // else (scroll) claimed the gesture, so we back off entirely.
+                                    val raceResult = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                        RaceResult.Released(waitForUpOrCancellation())
+                                    } ?: RaceResult.TimedOut
 
-        val flamePath = Path().apply {
-            moveTo(x - 6f, y)
-            quadraticTo(x + sway, y - height, x, y - height * 1.6f)
-            quadraticTo(x - sway, y - height, x + 6f, y)
-            close()
+                                    when (raceResult) {
+                                        is RaceResult.Released -> {
+                                            val upChange = raceResult.change
+                                            if (upChange != null) {
+                                                // Released quickly, no movement: a plain tap.
+                                                if (selectedPageIds.isNotEmpty()) {
+                                                    togglePageSelection(page)
+                                                } else {
+                                                    onPageClick(page)
+                                                }
+                                            }
+                                            // upChange == null means the gesture was claimed by
+                                            // something else (e.g. the grid started scrolling) —
+                                            // nothing to do, let it go.
+                                        }
+                                        RaceResult.TimedOut -> {
+                                            // Long press recognized: select regardless of
+                                            // whether the finger later moves or lifts.
+                                            if (selectedPageIds.isNotEmpty()) {
+                                                togglePageSelection(page)
+                                            } else {
+                                                selectedPageIds = setOf(page.pageId)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                ) {
+                    Image(
+                        painter = rememberAsyncImagePainter(page.uri),
+                        contentDescription = "Page ${index + 1}",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Top Left Floating Page Counter Index Badge Bubble[cite: 1]
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.5f),
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .padding(10.dp)
+                            .size(28.dp)
+                            .align(Alignment.TopStart)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = (index + 1).toString(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Top Right Contextual Icon: delete page normally, selection
+                    // checkmark while a multi-select is in progress. Hidden while
+                    // reordering so it can't be tapped mid-drag.
+                    if (!isReordering) {
+                        Surface(
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Black.copy(alpha = 0.5f)
+                            },
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .padding(10.dp)
+                                .size(28.dp)
+                                .align(Alignment.TopEnd)
+                                .clickable {
+                                    if (isSelecting) togglePageSelection(page) else onDeletePage(page)
+                                }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (isSelecting) Icons.Filled.Check else Icons.Filled.Close,
+                                    contentDescription = if (isSelecting) "Select page" else "Delete page",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
-        val flameColor = if (flicker < 0.5f) Color(0xFFFF7A18) else Color(0xFFFFC93C)
-        drawPath(flamePath, color = flameColor.copy(alpha = 0.85f))
-
-        if (flicker > 0.7f) {
-            drawLine(
-                color = Color(0xFFFFE9A8),
-                start = Offset(x, y - 2f),
-                end = Offset(x + sway * 2f, y - 10f),
-                strokeWidth = 2f,
-                cap = StrokeCap.Round
-            )
-        }
     }
-}
 
-/**
- * Draws [text] with a faux-3D extruded/embossed look: several copies of the
- * glyph are stacked behind the front-facing layer, each nudged one pixel
- * further down-right and shaded progressively darker, so it reads as a
- * raised gold block letter rather than flat text. No real 3D rendering is
- * involved — it's the standard "layered shadow stack" trick for faux depth
- * in a 2D UI.
- */
-@Composable
-private fun Extruded3DText(text: String, modifier: Modifier = Modifier) {
-    val depth = 6
-    Box(modifier = modifier) {
-        for (i in depth downTo 1) {
-            Text(
-                text = text,
-                fontWeight = FontWeight.ExtraBold,
-                fontStyle = FontStyle.Italic,
-                fontSize = 22.sp,
-                color = GoldShadeDark.copy(alpha = 1f - (i * 0.06f)),
-                modifier = Modifier.offset(x = i.dp, y = i.dp)
-            )
-        }
-        // Front face with a subtle highlight-to-base gradient for a polished,
-        // raised-metal look, plus a soft drop shadow for separation.
-        Text(
-            text = text,
-            fontWeight = FontWeight.ExtraBold,
-            fontStyle = FontStyle.Italic,
-            fontSize = 22.sp,
-            color = GoldColor,
-            style = LocalTextStyle.current.copy(
-                shadow = androidx.compose.ui.graphics.Shadow(
-                    color = Color.Black.copy(alpha = 0.35f),
-                    offset = androidx.compose.ui.geometry.Offset(2f, 2f),
-                    blurRadius = 3f
+    if (showRenameDialog) {
+        var renameText by remember { mutableStateOf(title) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename document") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
-            )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRenameDialog = false
+                        val trimmed = renameText.trim()
+                        if (trimmed.isNotEmpty()) onRename(trimmed)
+                    }
+                ) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
-}
 
-/** Metallic gold used for the developer credit name — reads clearly on a light surface. */
-private val GoldColor = Color(0xFFCC9A06)
-
-/** Darker gold used for the extruded "depth" layers behind the front face. */
-private val GoldShadeDark = Color(0xFF7A5C04)
-
-/** Developer contact rows: Telegram (inline link) and GitHub profile (inline link). */
-@Composable
-private fun DeveloperInfoSection() {
-    val uriHandler = LocalUriHandler.current
-
-    ListItem(
-        headlineContent = { Text("Telegram") },
-        supportingContent = { Text("t.me/ibyb007", color = MaterialTheme.colorScheme.primary) },
-        leadingContent = { TelegramIcon() },
-        trailingContent = {
-            Icon(
-                Icons.AutoMirrored.Filled.OpenInNew,
-                contentDescription = "Open Telegram",
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        },
-        modifier = Modifier.clickable { uriHandler.openUri("https://t.me/ibyb007") }
-    )
-
-    ListItem(
-        headlineContent = { Text("GitHub") },
-        supportingContent = { Text("@ibyb007", color = MaterialTheme.colorScheme.primary) },
-        leadingContent = { GitHubIcon() },
-        trailingContent = {
-            Icon(
-                Icons.AutoMirrored.Filled.OpenInNew,
-                contentDescription = "Open GitHub profile",
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        },
-        modifier = Modifier.clickable { uriHandler.openUri("https://github.com/ibyb007") }
-    )
-}
-
-/**
- * Telegram glyph drawn with a Compose Canvas (paper-plane on a circle) so no
- * brand SVG asset needs to be bundled for a single icon.
- */
-@Composable
-private fun TelegramIcon() {
-    Canvas(modifier = Modifier.size(28.dp)) {
-        val radius = size.minDimension / 2f
-        drawCircle(color = Color(0xFF29A9EB), radius = radius)
-
-        val plane = Path().apply {
-            moveTo(size.width * 0.22f, size.height * 0.52f)
-            lineTo(size.width * 0.80f, size.height * 0.22f)
-            lineTo(size.width * 0.64f, size.height * 0.80f)
-            lineTo(size.width * 0.46f, size.height * 0.60f)
-            lineTo(size.width * 0.34f, size.height * 0.70f)
-            lineTo(size.width * 0.38f, size.height * 0.50f)
-            close()
-        }
-        drawPath(plane, color = Color.White)
-    }
-}
-
-/**
- * GitHub mark approximated with a dark circular badge and a ">_" text glyph
- * layered on top — a precise Octocat silhouette is GitHub's brand artwork,
- * so a neutral "developer" glyph is drawn directly as text instead of
- * relying on an icon name from the extended set that may not exist.
- */
-@Composable
-private fun GitHubIcon() {
-    Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
-        Canvas(modifier = Modifier.size(28.dp)) {
-            drawCircle(color = Color(0xFF181717), radius = size.minDimension / 2f)
-        }
-        Text(
-            ">_",
-            color = Color.White,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete document?") },
+            text = { Text("This will permanently delete \"$title\" and all its pages.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete()
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }
