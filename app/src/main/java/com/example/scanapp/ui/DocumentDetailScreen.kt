@@ -1,5 +1,6 @@
 package com.example.scanapp.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -129,6 +130,16 @@ fun DocumentDetailScreen(
         }
     }
 
+    // Intercepts the system back button/gesture too, not just the in-app
+    // arrow icon — without this, hardware/gesture back skips isSelecting
+    // and isReordering entirely and falls straight through to onBackClick.
+    BackHandler(enabled = isSelecting || isReordering) {
+        when {
+            isSelecting -> selectedPageIds = emptySet()
+            isReordering -> isReordering = false
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         // We handle status/navigation bar insets ourselves inside the bars
@@ -192,7 +203,21 @@ fun DocumentDetailScreen(
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
-                        } else if (!isSelecting) {
+                        } else if (isSelecting) {
+                            IconButton(
+                                onClick = {
+                                    val selectedPages = orderedPages.filter { selectedPageIds.contains(it.pageId) }
+                                    selectedPages.forEach { onDeletePage(it) }
+                                    selectedPageIds = emptySet()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = "Delete selected",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        } else {
                             IconButton(onClick = { isReordering = true }) {
                                 Icon(
                                     imageVector = Icons.Filled.Reorder,
