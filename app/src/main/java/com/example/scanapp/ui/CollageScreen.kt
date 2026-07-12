@@ -115,7 +115,8 @@ fun CollageScreen(
     ) -> Unit,
     onHomeClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
-    onBackupClick: () -> Unit = {}
+    onBackupClick: () -> Unit = {},
+    navBarGlassOpacity: Float = NavBarPreferences.DEFAULT_GLASS_OPACITY
 ) {
     var selectedLayout by remember { mutableStateOf(CollageLayouts.ALL.first()) }
     var selectedPageSize by remember { mutableStateOf(CollagePageSize.A4) }
@@ -318,6 +319,7 @@ fun CollageScreen(
                 onToolsClick = {},
                 onBackupClick = onBackupClick,
                 onSettingsClick = onSettingsClick,
+                glassOpacity = navBarGlassOpacity,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onGloballyPositioned { navBarHeightPx = it.size.height }
