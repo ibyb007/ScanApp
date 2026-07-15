@@ -209,27 +209,11 @@ fun CollageScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             if (!isFullscreenEdit) {
-                TopAppBar(
-                    title = { Text("Create Collage") },
-                    navigationIcon = {
-                        IconButton(onClick = onBackClick) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        TextButton(
-                            onClick = { onSaveClick(selectedLayout, selectedPageSize, selectedOrientation, pages) },
-                            enabled = hasAnyAssignedPage && !isSaving
-                        ) {
-                            if (isSaving) {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Filled.Check, contentDescription = null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Save")
-                            }
-                        }
-                    }
+                CollageTopBar(
+                    onBackClick = onBackClick,
+                    isSaving = isSaving,
+                    canSave = hasAnyAssignedPage && !isSaving,
+                    onSaveClick = { onSaveClick(selectedLayout, selectedPageSize, selectedOrientation, pages) }
                 )
             }
         }
@@ -286,13 +270,12 @@ fun CollageScreen(
                             .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        Text("Tap Workspace to Expand Full Editing Mode", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text("Tap Here to Expand Full Editing Mode", color = Color.White, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
 
             if (!isFullscreenEdit) {
-                HorizontalDivider()
                 CollageBottomDock(
                     activeTab = activeTab,
                     onTabChange = { activeTab = it },
@@ -304,7 +287,8 @@ fun CollageScreen(
                     onOrientationToggle = {
                         selectedOrientation = if (selectedOrientation == CollageOrientation.PORTRAIT) CollageOrientation.LANDSCAPE else CollageOrientation.PORTRAIT
                     },
-                    onAddPagesClick = { showPagePicker = true }
+                    onAddPagesClick = { showPagePicker = true },
+                    glassOpacity = navBarGlassOpacity
                 )
             }
         }
@@ -334,9 +318,23 @@ fun CollageScreen(
         exit = fadeOut()
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // The fullscreen overlay sits outside Scaffold, so unlike
+                    // every other screen it gets no inset padding for free —
+                    // without this the header row drew right up under the
+                    // status bar and the dock drew right under the nav bar.
+                    .windowInsetsPadding(WindowInsets.systemBars)
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .cleanGlassBackground(
+                            tint = MaterialTheme.colorScheme.surfaceContainer,
+                            opacity = GLASS_HEADER_OPACITY
+                        )
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -400,7 +398,6 @@ fun CollageScreen(
                     )
                 }
 
-                HorizontalDivider()
                 CollageBottomDock(
                     activeTab = activeTab,
                     onTabChange = { activeTab = it },
@@ -412,7 +409,8 @@ fun CollageScreen(
                     onOrientationToggle = {
                         selectedOrientation = if (selectedOrientation == CollageOrientation.PORTRAIT) CollageOrientation.LANDSCAPE else CollageOrientation.PORTRAIT
                     },
-                    onAddPagesClick = { showPagePicker = true }
+                    onAddPagesClick = { showPagePicker = true },
+                    glassOpacity = navBarGlassOpacity
                 )
             }
         }
@@ -424,6 +422,60 @@ fun CollageScreen(
             onPickPage = { pageId -> assignPickedPage(pageId) },
             onDismiss = { showPagePicker = false }
         )
+    }
+}
+
+
+/** Opacity of the Collage screen's glass surfaces (header, bottom dock) that aren't the bottom nav pill itself — fixed, not user-tunable. */
+private const val GLASS_HEADER_OPACITY = 0.6f
+
+/**
+ * Compact liquid-glass header for the normal (non-fullscreen) editor: back
+ * arrow, title, and Save in a single tight row, matching the style used on
+ * the Settings screen rather than the taller default Material3 TopAppBar.
+ */
+@Composable
+private fun CollageTopBar(
+    onBackClick: () -> Unit,
+    isSaving: Boolean,
+    canSave: Boolean,
+    onSaveClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .cleanGlassBackground(
+                tint = MaterialTheme.colorScheme.surfaceContainer,
+                opacity = GLASS_HEADER_OPACITY
+            )
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(48.dp)
+                .padding(horizontal = 4.dp)
+        ) {
+            IconButton(onClick = onBackClick) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text(
+                "Create Collage",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onSaveClick, enabled = canSave) {
+                if (isSaving) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.Check, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Save")
+                }
+            }
+        }
     }
 }
 
@@ -636,9 +688,21 @@ private fun CollageBottomDock(
     selectedOrientation: CollageOrientation,
     onPageSizeChange: (CollagePageSize) -> Unit,
     onOrientationToggle: () -> Unit,
-    onAddPagesClick: () -> Unit
+    onAddPagesClick: () -> Unit,
+    glassOpacity: Float = NavBarPreferences.DEFAULT_GLASS_OPACITY
 ) {
-    Column(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .cleanGlassBackground(
+                tint = MaterialTheme.colorScheme.surfaceContainer,
+                opacity = glassOpacity
+            )
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+            )
+    ) {
         when (activeTab) {
             CollageDockTab.PAGE -> {
                 Box(
@@ -648,7 +712,7 @@ private fun CollageBottomDock(
                     TextButton(onClick = onAddPagesClick) {
                         Icon(Icons.Filled.InsertPageBreak, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Tap Workspace to Assign Document Pages")
+                        Text("Tap Here to Assign Document Pages")
                     }
                 }
             }
@@ -698,7 +762,7 @@ private fun CollageBottomDock(
             }
         }
 
-        HorizontalDivider()
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
         Row(modifier = Modifier.fillMaxWidth()) {
             DockTabButton(
