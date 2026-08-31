@@ -2,6 +2,12 @@ package com.example.scanapp.ui
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -9,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -39,9 +46,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -54,6 +64,7 @@ import coil.compose.rememberAsyncImagePainter
 import com.example.scanapp.export.OutputFormat
 import com.example.scanapp.data.DocumentSortBy
 import com.example.scanapp.data.SortDirection
+import kotlinx.coroutines.launch
 
 // Explicit import to fix the build failure
 import com.example.scanapp.ui.ThemeMode
@@ -709,6 +720,16 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier, isSearching: Boolea
  * simple frosted look. [glassOpacity] (0 = almost see-through, 1 = fully
  * opaque) is user-controlled from the Settings screen and persisted via
  * [NavBarPreferences].
+ *
+ * The selection indicator is a custom "liquid" pill (see
+ * [LiquidTabIndicator]) that stretches toward the newly selected tab before
+ * catching up and snapping back into shape, rather than Material3's default
+ * NavigationBar/NavigationBarItem (which only cross-fades). Items are
+ * hand-built too — a Column centered both ways in its slot — so the
+ * icon+label are always dead-center in the pill regardless of its height,
+ * instead of relying on NavigationBarItem's fixed internal paddings (tuned
+ * for the default 80dp-tall bar) which looked slightly off-center once the
+ * bar was shrunk to fit here.
  */
 @Composable
 internal fun ScanAppBottomNav(
@@ -746,14 +767,20 @@ internal fun ScanAppBottomNav(
                 shape = shape
             )
     ) {
-        NavigationBar(
-            containerColor = Color.Transparent,
-            tonalElevation = 0.dp,
-            windowInsets = WindowInsets(0, 0, 0, 0),
-            modifier = Modifier.fillMaxSize()
-        ) {
+        LiquidTabIndicator(
+            selectedIndex = selectedIndex,
+            itemCount = items.size,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 8.dp)
+        )
+
+        Row(modifier = Modifier.fillMaxSize()) {
             items.forEach { (label, icon, index) ->
-                NavigationBarItem(
+                ScanAppBottomNavItem(
+                    icon = icon,
+                    label = label,
                     selected = selectedIndex == index,
                     onClick = {
                         when (index) {
@@ -763,17 +790,130 @@ internal fun ScanAppBottomNav(
                             3 -> onSettingsClick()
                         }
                     },
-                    icon = { Icon(icon, contentDescription = label) },
-                    label = { Text(label) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
                 )
             }
+        }
+    }
+}
+
+/**
+ * One tab: icon above label, both perfectly centered — horizontally and
+ * vertically — in the slot it's given, so alignment stays correct no
+ * matter the bar's height. The icon does a small springy "pop" on
+ * selection and both icon and label crossfade color, echoing the bounce in
+ * the reference animation without needing a bespoke keyframe animation.
+ */
+@Composable
+private fun ScanAppBottomNavItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        label = "navItemColor"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.88f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "navItemIconScale"
+    )
+
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = contentColor,
+            modifier = Modifier
+                .size(24.dp)
+                .graphicsLayer {
+                    scaleX = iconScale
+                    scaleY = iconScale
+                }
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            label,
+            color = contentColor,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
+    }
+}
+
+/**
+ * The selection pill behind the active tab. Instead of just cross-fading
+ * or sliding at a constant rate, its two edges animate independently: the
+ * edge in the direction of travel races ahead on a fast spring while the
+ * trailing edge lags on a slower one, so the pill visibly stretches like a
+ * blob of liquid while moving and then snaps back to a clean capsule once
+ * both edges arrive — matching the reference animation.
+ */
+@Composable
+private fun LiquidTabIndicator(
+    selectedIndex: Int,
+    itemCount: Int,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier = modifier) {
+        val density = LocalDensity.current
+        val totalWidthPx = with(density) { maxWidth.toPx() }
+        val slotWidthPx = if (itemCount > 0) totalWidthPx / itemCount else 0f
+        val insetPx = with(density) { 6.dp.toPx() }
+
+        val targetLeft = selectedIndex * slotWidthPx + insetPx
+        val targetRight = (selectedIndex + 1) * slotWidthPx - insetPx
+
+        val leftEdge = remember { Animatable(targetLeft) }
+        val rightEdge = remember { Animatable(targetRight) }
+        var previousIndex by remember { mutableStateOf(selectedIndex) }
+
+        LaunchedEffect(selectedIndex, totalWidthPx) {
+            val movingForward = selectedIndex >= previousIndex
+            previousIndex = selectedIndex
+            val leadingSpec = spring<Float>(dampingRatio = 0.62f, stiffness = 380f)
+            val trailingSpec = spring<Float>(dampingRatio = 0.8f, stiffness = 200f)
+            if (movingForward) {
+                launch { rightEdge.animateTo(targetRight, leadingSpec) }
+                launch { leftEdge.animateTo(targetLeft, trailingSpec) }
+            } else {
+                launch { leftEdge.animateTo(targetLeft, leadingSpec) }
+                launch { rightEdge.animateTo(targetRight, trailingSpec) }
+            }
+        }
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val left = leftEdge.value.coerceAtMost(rightEdge.value)
+            val right = rightEdge.value.coerceAtLeast(leftEdge.value)
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(left, 0f),
+                size = Size(right - left, size.height),
+                cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
+            )
         }
     }
 }
