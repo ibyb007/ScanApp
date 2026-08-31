@@ -30,7 +30,7 @@ plugins {
 // workflow tags each release from this exact value — see
 // .github/workflows/build.yml.
 val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
-val appVersionName = "1.3.2"
+val appVersionName = "1.3.4"
 
 android {
     namespace = "com.example.scanapp"
@@ -132,7 +132,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     // ML Kit Document Scanner (the Google Drive-style scan UI)
-    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
 
     // Google Identity Services' AuthorizationClient — used to obtain a
     // short-lived Drive access token for the Google Drive backup/restore
