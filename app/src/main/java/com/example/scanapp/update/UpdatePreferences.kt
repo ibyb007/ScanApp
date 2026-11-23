@@ -1,9 +1,10 @@
 package com.example.scanapp.update
 
 import android.content.Context
+import com.example.scanapp.BuildConfig
 
 /**
- * Persists the two update-related settings toggles across app restarts.
+ * Persists the update-related settings (two toggles + the update channel) across app restarts.
  *
  * Plain SharedPreferences rather than DataStore — this is two booleans with
  * no need for Flow-based reactive observation (Settings reads them once on
@@ -18,6 +19,7 @@ object UpdatePreferences {
     private const val PREFS_NAME = "update_prefs"
     private const val KEY_CHECK_ON_START = "check_updates_on_start"
     private const val KEY_AUTO_INSTALL = "auto_install_updates"
+    private const val KEY_UPDATE_CHANNEL = "update_channel"
 
     // Checking for updates on every launch is a reasonable, low-friction
     // default; auto-install defaults OFF since it's the more consequential
@@ -41,5 +43,21 @@ object UpdatePreferences {
 
     fun setAutoInstallEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_AUTO_INSTALL, enabled).apply()
+    }
+
+    /**
+     * Saved update channel. On first use a canary build starts on Canary and
+     * anything else on Stable, so a tester isn't silently moved off canary.
+     */
+    fun getUpdateChannel(context: Context): UpdateChannel {
+        val saved = UpdateChannel.fromStoredValue(prefs(context).getString(KEY_UPDATE_CHANNEL, null))
+        if (saved != null) return saved
+        val default = UpdateChannel.defaultForVersion(BuildConfig.VERSION_NAME)
+        prefs(context).edit().putString(KEY_UPDATE_CHANNEL, default.storedValue).apply()
+        return default
+    }
+
+    fun setUpdateChannel(context: Context, channel: UpdateChannel) {
+        prefs(context).edit().putString(KEY_UPDATE_CHANNEL, channel.storedValue).apply()
     }
 }
