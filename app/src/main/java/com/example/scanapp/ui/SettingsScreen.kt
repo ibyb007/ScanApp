@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.scanapp.update.UpdateChannel
+import com.example.scanapp.update.VersionUtils
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
@@ -62,6 +64,8 @@ fun SettingsScreen(
     onCheckUpdatesOnStartChange: (Boolean) -> Unit = {},
     autoInstallUpdates: Boolean = false,
     onAutoInstallUpdatesChange: (Boolean) -> Unit = {},
+    updateChannel: UpdateChannel = UpdateChannel.STABLE,
+    onUpdateChannelChange: (UpdateChannel) -> Unit = {},
     navBarGlassOpacity: Float = NavBarPreferences.DEFAULT_GLASS_OPACITY,
     onNavBarGlassOpacityChange: (Float) -> Unit = {},
     onBackClick: () -> Unit,
@@ -174,8 +178,20 @@ fun SettingsScreen(
             // Version info
             ListItem(
                 headlineContent = { Text("Version") },
-                supportingContent = { Text("$versionName (build $versionCode)") },
+                // Stable "1.3.4"; canary "1.3.4-canary.2" is shown as "1.3.4 (2)".
+                supportingContent = {
+                    val canarySuffix = if (VersionUtils.isCanary(versionName)) " · Canary" else ""
+                    Text("${VersionUtils.display(versionName)}$canarySuffix · build $versionCode")
+                },
                 leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) }
+            )
+
+            // Update channel — Stable only offers fully released versions;
+            // Canary also offers the early test builds published between
+            // stable releases (see .github/workflows/build.yml).
+            UpdateChannelRow(
+                selected = updateChannel,
+                onSelected = onUpdateChannelChange
             )
 
             // Check Updates on Start — silently checks GitHub Releases once
@@ -254,6 +270,40 @@ fun SettingsScreen(
         )
         }
     }
+}
+
+/** "Update channel" setting: Stable / Canary chips with a one-line explanation of the selected one. */
+@Composable
+private fun UpdateChannelRow(
+    selected: UpdateChannel,
+    onSelected: (UpdateChannel) -> Unit
+) {
+    ListItem(
+        headlineContent = { Text("Update channel") },
+        supportingContent = {
+            Column {
+                Text(
+                    when (selected) {
+                        UpdateChannel.STABLE ->
+                            "Only fully released versions. Switching from Canary keeps your current build until a newer stable release is out."
+                        UpdateChannel.CANARY ->
+                            "Early test builds (shown as 1.3.4 (2)) plus stable releases. May contain bugs."
+                    }
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    UpdateChannel.values().forEach { channel ->
+                        FilterChip(
+                            selected = channel == selected,
+                            onClick = { onSelected(channel) },
+                            label = { Text(channel.title) }
+                        )
+                    }
+                }
+            }
+        },
+        leadingContent = { Icon(Icons.Filled.NewReleases, contentDescription = null) }
+    )
 }
 
 /**
