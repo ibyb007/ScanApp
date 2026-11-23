@@ -1,10 +1,38 @@
 name: Build APK
 
+# Manual only: Actions tab > "Build APK" > Run workflow
+#
+#   stable : normal GitHub *Release*     tag v<version>            e.g. v1.3.5          shown as "1.3.5"
+#   canary : GitHub *Pre-release*        tag v<stable>-canary.<n>  e.g. v1.3.5-canary.1 shown as "1.3.5 (1)"
+#
+# For a STABLE run, type the version number in the "version" box (e.g. 1.3.5, no leading v).
+# Canary numbers count up from 1 after every stable release: stable 1.3.5 is followed by
+# 1.3.5 (1), 1.3.5 (2), ... until the next stable restarts the count. The in-app updater
+# (Settings > Update channel) reads these releases: Stable only offers stable releases,
+# Canary offers both.
+
 on:
   workflow_dispatch:   # the only way to trigger a build — no push/PR auto-runs
+    inputs:
+      channel:
+        description: "Release channel"
+        type: choice
+        options: [ canary, stable ]
+        default: canary
+      version:
+        description: "Stable only: version number, e.g. 1.3.5 (no leading v). Must be higher than the last stable."
+        type: string
+        required: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write   # required so the release step can create tags/releases
+
+env:
+  BASE_VERSION: "1.0.0"   # canary base before the first stable release exists
 
 jobs:
   build:
@@ -14,57 +42,97 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history + tags, needed to diff against the previous release for the changelog
+          fetch-depth: 0   # full history + tags, needed for version numbering and the changelog
 
-      - name: Bump app version
-        id: bump_version
-        # Auto-bumps the human-facing versionName, but ONLY if it wasn't
-        # already bumped by hand before triggering this workflow.
-        # Detection: compare the version currently in build.gradle.kts
-        # against the version of the latest release tag. If they're the
-        # same, nobody touched it since the last release, so auto-bump.
-        # If they differ, someone already edited appVersionName manually
-        # before running this workflow, so we respect that value as-is.
-        # Rolls PATCH 0→9, then MINOR bumps and PATCH resets to 0:
-        #   1.1.0 → 1.1.1 → … → 1.1.9 → 1.2.0 → 1.2.1 → …
-        # MAJOR is never touched automatically — bump it by hand in
-        # build.gradle.kts when you actually want a major version change.
-        # This step's commit (or the pre-existing manual commit) becomes
-        # the new source of truth for appVersionName from here on (both
-        # for this build and every one after it).
+      # ---------- Work out channel / version ----------
+      - name: Resolve channel and version
+        id: meta
+        shell: bash
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          CURRENT=$(grep -oP 'val appVersionName = "\K[^"]+' app/build.gradle.kts)
+          set -euo pipefail
+          git fetch --tags --force --quiet || true
 
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          PREV_VERSION="${PREV_TAG#v}"
+          # newest stable release (tags like v1.3.5); canaries after it are numbered from it
+          LAST_STABLE="$( { git tag -l | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sed 's/^v//' | sort -V | tail -n1 )"
+          # highest version any tag was made for (stable or canary base)
+          HIGHEST="$( { git tag -l | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+)?$' || true; } \
+                      | sed -E 's/^v//; s/-canary\.[0-9]+$//' | sort -V | tail -n1 )"
 
-          if [ -n "$PREV_VERSION" ] && [ "$CURRENT" != "$PREV_VERSION" ]; then
-            echo "Version already bumped manually: ${PREV_VERSION} -> ${CURRENT}. Skipping auto-bump."
-            NEW_VERSION="$CURRENT"
-          else
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-
-            if [ "$PATCH" -ge 9 ]; then
-              PATCH=0
-              MINOR=$((MINOR + 1))
-            else
-              PATCH=$((PATCH + 1))
+          if [[ "$INPUT_CHANNEL" == "stable" ]]; then
+            CHANNEL="stable"
+            VERSION="${INPUT_VERSION#v}"
+            if [[ -z "$VERSION" ]]; then echo "::error::Stable runs need a 'version' input, e.g. 1.3.5"; exit 1; fi
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::Version must look like 1.3.5"; exit 1; fi
+            if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then echo "::error::Tag v${VERSION} already exists"; exit 1; fi
+            # must be higher than every earlier stable AND than the base of earlier canaries, otherwise
+            # devices on a canary of that version would never be offered it
+            if [[ -n "$HIGHEST" && ( "$VERSION" == "$HIGHEST" || "$(printf '%s\n%s\n' "$VERSION" "$HIGHEST" | sort -V | tail -n1)" != "$VERSION" ) ]]; then
+              echo "::error::Stable version $VERSION must be higher than $HIGHEST"; exit 1
             fi
-
-            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-            echo "Bumping version: $CURRENT -> $NEW_VERSION"
-
-            sed -i "s/val appVersionName = \"${CURRENT}\"/val appVersionName = \"${NEW_VERSION}\"/" app/build.gradle.kts
-
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/build.gradle.kts
-            git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
-            git push origin HEAD:"${GITHUB_REF_NAME}"
+            VERSION_NAME="$VERSION"
+            TAG="v${VERSION}"
+            TITLE="ScanApp v${VERSION}"
+            PRERELEASE=false
+          else
+            CHANNEL="canary"
+            BASE="${LAST_STABLE:-$BASE_VERSION}"
+            LAST_N="$( { git tag -l "v${BASE}-canary.*" || true; } | sed -E 's/.*-canary\.//' | sort -n | tail -n1 )"
+            N=$(( ${LAST_N:-0} + 1 ))
+            VERSION_NAME="${BASE}-canary.${N}"
+            TAG="v${VERSION_NAME}"
+            TITLE="ScanApp Canary ${BASE} (${N})"
+            PRERELEASE=true
           fi
 
-          echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          {
+            echo "channel=$CHANNEL"
+            echo "version_name=$VERSION_NAME"
+            echo "tag=$TAG"
+            echo "title=$TITLE"
+            echo "prerelease=$PRERELEASE"
+            echo "apk_name=ScanApp-${VERSION_NAME}.apk"
+          } >> "$GITHUB_OUTPUT"
+          echo "Channel=$CHANNEL  Version=$VERSION_NAME  Tag=$TAG  Title=$TITLE"
 
+      # ---------- Release notes: the 4 newest changes since the previous release ----------
+      - name: Generate release notes
+        shell: bash
+        env:
+          CHANNEL: ${{ steps.meta.outputs.channel }}
+        run: |
+          set -euo pipefail
+          # stable: changes since the previous stable release; canary: since the previous release of any kind
+          if [[ "$CHANNEL" == "stable" ]]; then
+            PREV="$( { git tag -l | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1 )"
+          else
+            PREV="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)"
+          fi
+          if [[ -n "$PREV" ]]; then RANGE="${PREV}..HEAD"; else RANGE="HEAD"; fi
+
+          git log "$RANGE" --no-merges --pretty='%s' -n 100 \
+            | sed -E 's/^[A-Za-z]+(\([^)]*\))?!?:[[:space:]]*//' \
+            | grep -v -i -E '^(merge |wip|update readme|bump |release )' \
+            | awk 'NF && !seen[tolower($0)]++' \
+            | head -n 4 \
+            | sed -E 's/^(.)/\U\1/; s/^/- /' > changes.md || true
+
+          if [[ ! -s changes.md ]]; then echo "- Maintenance and stability improvements" > changes.md; fi
+
+          {
+            if [[ "$CHANNEL" == "canary" ]]; then
+              echo "> [!IMPORTANT]"
+              echo "> **Canary builds are for testing and may contain bugs or regressions.** If you prefer a reliable experience, stay on the **Stable** channel."
+              echo
+            fi
+            echo "### What's changed"
+            cat changes.md
+          } > release-notes.md
+          cat release-notes.md
+
+      # ---------- Toolchain ----------
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -82,8 +150,13 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      # ---------- Build ----------
+      # versionName comes from the resolved tag, versionCode from the run number (always increasing).
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon -PbuildNumber=${{ github.run_number }}
+        run: >
+          gradle assembleDebug --no-daemon
+          -PbuildNumber=${{ github.run_number }}
+          -PappVersionName="${{ steps.meta.outputs.version_name }}"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
@@ -92,17 +165,11 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      # --- GitHub Release publishing ---
-      # Builds the RELEASE variant, now signed with a real, permanent release
-      # key instead of AGP's debug keystore (see the signingConfigs comment in
-      # app/build.gradle.kts for why that was silently breaking installs over
-      # previous releases — TL;DR: the debug keystore isn't a real file, it's
-      # generated fresh per machine, and every Actions run is a fresh machine).
-      #
-      # RELEASE_KEYSTORE_BASE64 holds the keystore file itself, base64-encoded
-      # (binary secrets can't be stored directly in repo secrets). Decoded
-      # back to a real .jks file here, used only for this run, then discarded
-      # along with the rest of the throwaway VM.
+      # Builds the RELEASE variant, signed with the real, permanent release key
+      # (see the signingConfigs comment in app/build.gradle.kts for why — every
+      # Actions run is a fresh machine, so the debug keystore can't be reused).
+      # RELEASE_KEYSTORE_BASE64 holds the keystore file, base64-encoded; it is
+      # decoded for this run only, then discarded with the throwaway VM.
       - name: Decode release keystore
         run: printf '%s' "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
 
@@ -110,6 +177,7 @@ jobs:
         run: >
           gradle assembleRelease --no-daemon
           -PbuildNumber=${{ github.run_number }}
+          -PappVersionName="${{ steps.meta.outputs.version_name }}"
           -PRELEASE_STORE_FILE=${{ github.workspace }}/release.keystore
           -PRELEASE_STORE_PASSWORD=${{ secrets.RELEASE_STORE_PASSWORD }}
           -PRELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }}
@@ -119,41 +187,46 @@ jobs:
         if: always()
         run: rm -f release.keystore
 
-      - name: Generate release tag
-        id: tag
-        # Uses the version this run itself just bumped to (see "Bump app
-        # version" above) rather than re-reading the file, so there's no
-        # chance of the tag and this build's actual versionName disagreeing.
-        # UpdateChecker compares this tag numerically against
-        # BuildConfig.VERSION_NAME, so the two must agree.
-        run: echo "tag=v${{ steps.bump_version.outputs.version }}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate changelog
-        id: changelog
-        # Real commit messages since the previous tag, instead of relying
-        # purely on GitHub's auto-generated notes (which just produce a bare
-        # "Full Changelog: vX...vY" compare link when commits aren't behind
-        # PRs). Falls back to the full log if this is the first release ever.
+      - name: Collect APK
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$PREV_TAG" ]; then
-            RANGE="HEAD"
-          else
-            RANGE="$PREV_TAG..HEAD"
-          fi
-          {
-            echo "changelog<<CHANGELOG_EOF"
-            echo "## What's changed"
-            git log "$RANGE" --no-merges --pretty=format:"- %s (%h)"
-            echo ""
-            echo "CHANGELOG_EOF"
-          } >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          test -n "$APK" || { echo "::error::No release APK found"; exit 1; }
+          mkdir -p dist
+          cp "$APK" "dist/${{ steps.meta.outputs.apk_name }}"
+          (cd dist && sha256sum "${{ steps.meta.outputs.apk_name }}" > "${{ steps.meta.outputs.apk_name }}.sha256")
+          ls -la dist
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "ScanApp ${{ steps.tag.outputs.tag }}"
-          body: ${{ steps.changelog.outputs.changelog }}
-          generate_release_notes: true
-          files: app/build/outputs/apk/release/app-release.apk
+      # ---------- Release ----------
+      # A real GitHub Release (stable) or Pre-release (canary) with the APK attached - not just a tag.
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          APK_NAME: ${{ steps.meta.outputs.apk_name }}
+        run: |
+          set -euo pipefail
+          args=( "$TAG" "dist/${APK_NAME}" "dist/${APK_NAME}.sha256"
+                 --target "$GITHUB_SHA" --title "$TITLE" --notes-file release-notes.md )
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=( --prerelease --latest=false )
+          else
+            args+=( --latest )
+          fi
+          gh release create "${args[@]}"
+
+      # Keep only the 10 newest canary pre-releases so the Releases page stays tidy.
+      - name: Prune old canary releases
+        if: steps.meta.outputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 200 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | test("-canary\\."))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+          | while read -r tag; do
+              echo "Deleting old canary $tag"
+              gh release delete "$tag" --cleanup-tag --yes || true
+            done
