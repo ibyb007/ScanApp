@@ -91,17 +91,18 @@ object CollageLayouts {
  * dragged and resized it to, so two pictures can be any size, anywhere, even
  * overlapping if the user wants that.
  *
- * The picture is always stretched/compressed to exactly match this
- * rectangle (see [CollageCompositor]) rather than fit-with-letterboxing —
- * that's what guarantees there's never empty space inside the frame's own
- * boundary, no matter what aspect ratio the user resizes it to.
+ * A frame holding a picture always has the picture's own aspect ratio (see
+ * [CollageFit]) and resizing keeps that ratio locked, so pictures are never
+ * stretched. [rotationDegrees] spins the frame around its centre.
  */
 data class CollagePictureFrame(
     val pageId: Long?,
     val xFraction: Float,
     val yFraction: Float,
     val widthFraction: Float,
-    val heightFraction: Float
+    val heightFraction: Float,
+    /** Clockwise rotation in degrees, applied around the frame's centre. */
+    val rotationDegrees: Float = 0f
 ) {
     companion object {
         fun empty(x: Float, y: Float, width: Float, height: Float) = CollagePictureFrame(
@@ -124,24 +125,73 @@ data class CollagePage(
 )
 
 /**
- * Produces sensible non-overlapping starting rectangles for N pictures on a
- * blank page, so a freshly added page (or a layout switch) doesn't dump
- * every picture in the exact same spot. These are just defaults — every
- * value here is then freely draggable/resizable by the user afterward.
+ * Aspect-ratio helpers. Frame geometry is stored as fractions of the canvas,
+ * so a square fraction is NOT a square on screen unless the canvas is square —
+ * every calculation here goes through [canvasAspect] (canvas width / height)
+ * to stay in true pixel proportions.
+ */
+object CollageFit {
+
+    /**
+     * Largest rectangle with [imageAspect] (width / height) that fits inside
+     * [cell] (fractions of the canvas), centred in it. Never stretches.
+     */
+    fun fitInto(cell: RectF, imageAspect: Float, canvasAspect: Float): RectF {
+        val safeAspect = if (imageAspect > 0f) imageAspect else 1f
+        val cellAspectPx = (cell.width() * canvasAspect) / cell.height()
+        val width: Float
+        val height: Float
+        if (safeAspect > cellAspectPx) {
+            width = cell.width()
+            height = cell.width() * canvasAspect / safeAspect
+        } else {
+            height = cell.height()
+            width = cell.height() * safeAspect / canvasAspect
+        }
+        val left = cell.left + (cell.width() - width) / 2f
+        val top = cell.top + (cell.height() - height) / 2f
+        return RectF(left, top, left + width, top + height)
+    }
+
+    /**
+     * Re-expresses a frame for a canvas whose aspect changed from
+     * [oldCanvasAspect] to [newCanvasAspect] (page size / orientation
+     * switch): same centre, same share of the page area, picture ratio kept.
+     */
+    fun rescaleForCanvas(
+        frame: CollagePictureFrame,
+        imageAspect: Float,
+        oldCanvasAspect: Float,
+        newCanvasAspect: Float
+    ): CollagePictureFrame {
+        val aspect = if (imageAspect > 0f) imageAspect else 1f
+        val area = frame.widthFraction * frame.heightFraction
+        var height = kotlin.math.sqrt(area * newCanvasAspect / aspect)
+        var width = aspect * height / newCanvasAspect
+        val shrink = minOf(1f / width, 1f / height, 1f)
+        width *= shrink
+        height *= shrink
+        val centerX = frame.xFraction + frame.widthFraction / 2f
+        val centerY = frame.yFraction + frame.heightFraction / 2f
+        return frame.copy(
+            xFraction = (centerX - width / 2f).coerceIn(0f, 1f - width),
+            yFraction = (centerY - height / 2f).coerceIn(0f, 1f - height),
+            widthFraction = width,
+            heightFraction = height
+        )
+    }
+}
+
+/**
+ * Produces non-overlapping starting cells for N pictures on a blank page.
+ * These are only the *slots* pictures get fitted into ([CollageFit.fitInto]);
+ * once a picture is placed its frame is independent and freely
+ * draggable / resizable / rotatable.
  */
 object CollageDefaultArrangement {
 
     private const val MARGIN = 0.04f
     private const val GUTTER = 0.03f
-
-    // A normal document/photo-like width:height ratio for each cell's *starting*
-    // shape. Without this, dividing the canvas evenly by rows/cols would stretch
-    // each cell to fill its whole grid slot — fine for a single square-ish slot,
-    // but for e.g. "1 x 2" (2 columns, 1 row) on a portrait A4 canvas that makes
-    // each starting cell extremely tall and narrow, which then badly distorts
-    // whatever picture gets stretched into it. Cells are still freely
-    // draggable/resizable afterward; this only affects where they start.
-    private const val TARGET_ASPECT = 0.72f
 
     fun ratesFor(count: Int, gridCols: Int? = null, gridRows: Int? = null): List<RectF> {
         if (count <= 0) return emptyList()
@@ -149,55 +199,26 @@ object CollageDefaultArrangement {
             return listOf(RectF(MARGIN, MARGIN, 1f - MARGIN, 1f - MARGIN))
         }
 
-        // Choose a near-square grid of rows/cols just to seed starting
-        // positions, unless the layout explicitly asks for a specific shape
-        // (e.g. "side by side" vs "stacked" for the same picture count);
-        // once placed, each frame is independent of this grid.
         val cols = gridCols ?: kotlin.math.ceil(kotlin.math.sqrt(count.toDouble())).toInt().coerceAtLeast(1)
         val rows = gridRows ?: kotlin.math.ceil(count.toDouble() / cols).toInt().coerceAtLeast(1)
 
-        val usableWidth = 1f - 2 * MARGIN
-        val usableHeight = 1f - 2 * MARGIN
-        val slotWidth = (usableWidth - GUTTER * (cols - 1)) / cols
-        val slotHeight = (usableHeight - GUTTER * (rows - 1)) / rows
-
-        // Fit a TARGET_ASPECT-shaped cell within its grid slot (like
-        // ContentScale.Fit for the slot itself), then center it there —
-        // leaving a bit of breathing room on whichever axis has slack,
-        // rather than stretching the cell to the slot's own shape.
-        val cellWidth: Float
-        val cellHeight: Float
-        if (slotWidth / slotHeight > TARGET_ASPECT) {
-            cellHeight = slotHeight
-            cellWidth = cellHeight * TARGET_ASPECT
-        } else {
-            cellWidth = slotWidth
-            cellHeight = cellWidth / TARGET_ASPECT
-        }
+        val slotWidth = (1f - 2 * MARGIN - GUTTER * (cols - 1)) / cols
+        val slotHeight = (1f - 2 * MARGIN - GUTTER * (rows - 1)) / rows
 
         return (0 until count).map { index ->
             val row = index / cols
             val col = index % cols
-            val slotLeft = MARGIN + col * (slotWidth + GUTTER)
-            val slotTop = MARGIN + row * (slotHeight + GUTTER)
-            val left = slotLeft + (slotWidth - cellWidth) / 2f
-            val top = slotTop + (slotHeight - cellHeight) / 2f
-            RectF(left, top, left + cellWidth, top + cellHeight)
+            val left = MARGIN + col * (slotWidth + GUTTER)
+            val top = MARGIN + row * (slotHeight + GUTTER)
+            RectF(left, top, left + slotWidth, top + slotHeight)
         }
     }
 }
 
 /**
  * Renders a list of pages, each a free-form arrangement of picture frames,
- * into one bitmap per page. Each picture is stretched/compressed to exactly
- * match its own frame rectangle — not fit-with-letterboxing — so a frame's
- * boundary and the picture's visible edges are always the same line,
- * whatever aspect ratio the user resizes the frame to.
- *
- * An empty frame (pageId == null) is simply skipped — it never reaches this
- * point in practice since the UI only creates a page once at least one
- * picture is assigned, but staying permissive here means this never throws
- * on a partially-filled page either.
+ * into one bitmap per page. Pictures are drawn fit-inside their frame
+ * (never stretched) and rotated around the frame centre.
  */
 object CollageCompositor {
 
@@ -231,13 +252,6 @@ object CollageCompositor {
         return result
     }
 
-    /**
-     * Draws one picture stretched to exactly fill its frame rectangle —
-     * matching CamScanner's collage behavior, where resizing a frame always
-     * resizes the picture inside it 1:1 with no gap and no crop, at the cost
-     * of distorting the picture's proportions if the frame's aspect ratio
-     * doesn't match the picture's own.
-     */
     private fun drawPictureInFrame(
         canvas: Canvas,
         paint: Paint,
@@ -246,12 +260,23 @@ object CollageCompositor {
         canvasWidthPx: Int,
         canvasHeightPx: Int
     ) {
-        val frameLeft = frame.xFraction * canvasWidthPx
-        val frameTop = frame.yFraction * canvasHeightPx
-        val frameWidth = frame.widthFraction * canvasWidthPx
-        val frameHeight = frame.heightFraction * canvasHeightPx
+        val frameRect = RectF(
+            frame.xFraction * canvasWidthPx,
+            frame.yFraction * canvasHeightPx,
+            (frame.xFraction + frame.widthFraction) * canvasWidthPx,
+            (frame.yFraction + frame.heightFraction) * canvasHeightPx
+        )
+        // Fit (not stretch) in true pixel space: treat the frame rect as the
+        // cell on a canvas whose aspect is 1, i.e. work directly in pixels.
+        val destRect = CollageFit.fitInto(
+            cell = frameRect,
+            imageAspect = bitmap.width.toFloat() / bitmap.height.toFloat(),
+            canvasAspect = 1f
+        )
 
-        val destRect = RectF(frameLeft, frameTop, frameLeft + frameWidth, frameTop + frameHeight)
+        canvas.save()
+        canvas.rotate(frame.rotationDegrees, frameRect.centerX(), frameRect.centerY())
         canvas.drawBitmap(bitmap, null, destRect, paint)
+        canvas.restore()
     }
 }
