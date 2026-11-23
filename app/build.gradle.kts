@@ -5,32 +5,26 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-// versionCode and versionName now do two different jobs, on purpose:
+// versionCode and versionName do two different jobs, on purpose:
 //
-// versionCode is the plain, ever-climbing integer Android actually uses to
-// decide "is this build newer than the installed one" — it's invisible to
-// users, so it's fine (expected, even) for it to be a big ugly number. The
-// CI workflow passes -PbuildNumber=<run_number> on every build, giving a
-// strictly increasing versionCode automatically. Local builds (no -P flag)
-// fall back to buildNumber 1.
+// versionCode is the plain, ever-climbing integer Android uses to decide "is
+// this build newer than the installed one" — invisible to users. CI passes
+// -PbuildNumber=<run_number> on every build, so it strictly increases across
+// stable AND canary builds. Local builds (no -P flag) fall back to 1.
 //
-// versionName is the human-facing string (Play Store, Settings, the update
-// dialog). It used to be derived from the same buildNumber ("1.0.$buildNumber"),
-// which meant it climbed by one on every single CI run instead of only on
-// releases that actually warranted a new version — hence versionName drifting
-// into things like "1.0.101".
+// versionName is the human-facing string (Settings, the update dialog) and is
+// what the in-app updater compares against GitHub release tags. CI passes it
+// as -PappVersionName, decided by .github/workflows/build.yml:
+//   stable : "1.3.5"            (you type the number in the workflow's "version" box)
+//   canary : "1.3.5-canary.2"   (auto-numbered after the latest stable; shown as "1.3.5 (2)")
+// Both channels share the same applicationId and signing key, so the updater
+// can move between them and install over the running app.
 //
-// It's set below as a plain literal, but you normally won't touch this by
-// hand: the release workflow's "Bump app version" step auto-increments it
-// on every release dispatch (PATCH 0→9, then MINOR bumps and PATCH resets:
-// 1.1.0 → 1.1.9 → 1.2.0 → …) and commits the new value back to this file
-// before building. Edit it here yourself only for a MAJOR bump, or to
-// correct the sequence. UpdateChecker compares the release tag numerically
-// against BuildConfig.VERSION_NAME to detect updates, and the release
-// workflow tags each release from this exact value — see
-// .github/workflows/build.yml.
+// The literal below is only the fallback for local builds — it is no longer
+// auto-bumped or committed back by CI. Keep it roughly in step with the latest
+// stable release if you care what local builds report.
 val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
-val appVersionName = "1.3.4"
+val appVersionName = (project.findProperty("appVersionName") as String?) ?: "1.3.4"
 
 android {
     namespace = "com.example.scanapp"
