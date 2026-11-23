@@ -160,6 +160,7 @@ class MainActivity : ComponentActivity() {
 
     private var checkUpdatesOnStart by mutableStateOf(true)
     private var autoInstallUpdates by mutableStateOf(false)
+    private var updateChannel by mutableStateOf(com.example.scanapp.update.UpdateChannel.STABLE)
 
     // Opacity of the liquid glass bottom nav (ScanAppBottomNav), tunable
     // from the Settings screen and persisted via NavBarPreferences so it
@@ -236,6 +237,7 @@ class MainActivity : ComponentActivity() {
 
         checkUpdatesOnStart = com.example.scanapp.update.UpdatePreferences.isCheckOnStartEnabled(applicationContext)
         autoInstallUpdates = com.example.scanapp.update.UpdatePreferences.isAutoInstallEnabled(applicationContext)
+        updateChannel = com.example.scanapp.update.UpdatePreferences.getUpdateChannel(applicationContext)
         darkThemeOverride = com.example.scanapp.ui.ThemePreferences.getDarkOverride(applicationContext)
         navBarGlassOpacity = com.example.scanapp.ui.NavBarPreferences.getGlassOpacity(applicationContext)
         homeSortBy = com.example.scanapp.data.SortPreferences.getSortBy(applicationContext)
@@ -526,6 +528,15 @@ class MainActivity : ComponentActivity() {
                         onAutoInstallUpdatesChange = { enabled ->
                             autoInstallUpdates = enabled
                             com.example.scanapp.update.UpdatePreferences.setAutoInstallEnabled(applicationContext, enabled)
+                        },
+                        updateChannel = updateChannel,
+                        onUpdateChannelChange = { channel ->
+                            if (channel != updateChannel) {
+                                updateChannel = channel
+                                com.example.scanapp.update.UpdatePreferences.setUpdateChannel(applicationContext, channel)
+                                // Re-check straight away so the row shows what this channel offers.
+                                checkForUpdate()
+                            }
                         },
                         navBarGlassOpacity = navBarGlassOpacity,
                         onNavBarGlassOpacityChange = { opacity ->
@@ -1110,7 +1121,8 @@ class MainActivity : ComponentActivity() {
         updateStatusMessage = null
         lifecycleScope.launch {
             val result = com.example.scanapp.update.UpdateChecker.checkForUpdate(
-                com.example.scanapp.BuildConfig.VERSION_NAME
+                com.example.scanapp.BuildConfig.VERSION_NAME,
+                updateChannel
             )
             when (result) {
                 is com.example.scanapp.update.UpdateCheckResult.UpToDate -> {
@@ -1133,7 +1145,8 @@ class MainActivity : ComponentActivity() {
     private fun checkForUpdateOnStartup() {
         lifecycleScope.launch {
             val result = com.example.scanapp.update.UpdateChecker.checkForUpdate(
-                com.example.scanapp.BuildConfig.VERSION_NAME
+                com.example.scanapp.BuildConfig.VERSION_NAME,
+                updateChannel
             )
             if (result is com.example.scanapp.update.UpdateCheckResult.UpdateAvailable) {
                 latestReleaseUrl = result.releaseUrl
