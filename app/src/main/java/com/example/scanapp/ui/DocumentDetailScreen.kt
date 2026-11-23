@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Reorder
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -101,7 +102,8 @@ fun DocumentDetailScreen(
     onDeletePage: (DetailPage) -> Unit,
     onReorder: (List<Long>) -> Unit,
     onExportSelected: (List<DetailPage>) -> Unit,
-    onEditSelected: (List<DetailPage>) -> Unit
+    onEditSelected: (List<DetailPage>) -> Unit,
+    onCollageSelected: (List<DetailPage>) -> Unit
 ) {
     // Local, instantly-reorderable copy of the pages. Kept in sync whenever a
     // new list comes down from the caller (pages added/removed/refreshed).
@@ -204,6 +206,37 @@ fun DocumentDetailScreen(
                                 )
                             }
                         } else if (isSelecting) {
+                            // Select all / deselect all
+                            val allSelected = selectedPageIds.size == orderedPages.size
+                            TextButton(
+                                onClick = {
+                                    selectedPageIds = if (allSelected) {
+                                        emptySet()
+                                    } else {
+                                        orderedPages.map { it.pageId }.toSet()
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Text(
+                                    text = if (allSelected) "Deselect all" else "Select all",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1
+                                )
+                            }
+                            // Open the selected pages in the collage editor
+                            IconButton(
+                                onClick = {
+                                    val selectedPages = orderedPages.filter { selectedPageIds.contains(it.pageId) }
+                                    onCollageSelected(selectedPages)
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ViewModule,
+                                    contentDescription = "Collage selected",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                             IconButton(
                                 onClick = {
                                     val selectedPages = orderedPages.filter { selectedPageIds.contains(it.pageId) }
