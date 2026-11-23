@@ -2,6 +2,7 @@ package com.example.scanapp.update
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -27,30 +28,33 @@ sealed class UpdateCheckResult {
 }
 
 /**
- * Checks GitHub's Releases API for the latest published release tag and
- * compares it against the app's current versionName.
+ * Checks GitHub's Releases API for the newest release the selected
+ * [UpdateChannel] may offer and compares it against the app's versionName.
+ *
+ * Releases are tagged by the build workflow (.github/workflows/build.yml):
+ *   stable : normal Release,  tag v1.3.5            shown as "1.3.5"
+ *   canary : Pre-release,     tag v1.3.5-canary.2   shown as "1.3.5 (2)"
+ * Stable only ever sees stable releases; Canary sees both and offers the
+ * highest version of either kind (see [VersionUtils] for the ordering).
  *
  * Parses the response with org.json (built into Android — no extra
- * dependency to add) rather than hand-rolled regex scanning. An earlier
- * version scanned the raw JSON text directly to avoid a JSON library, but
- * that approach silently failed to find the .apk asset's
- * browser_download_url in real-world responses (it relied on the asset's
- * fields staying within a fixed-size text window, which is exactly the kind
- * of assumption a real parser doesn't need to make). A real parser is both
- * more reliable and barely more code.
+ * dependency) rather than hand-rolled regex scanning.
  */
 object UpdateChecker {
 
     private const val REPO_OWNER = "ibyb007"
     private const val REPO_NAME = "ScanApp"
-    private const val LATEST_RELEASE_API_URL =
-        "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
+    private const val RELEASES_API_URL =
+        "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases?per_page=30"
     private const val RELEASES_PAGE_URL =
-        "https://github.com/$REPO_OWNER/$REPO_NAME/releases/latest"
+        "https://github.com/$REPO_OWNER/$REPO_NAME/releases"
 
-    suspend fun checkForUpdate(currentVersionName: String): UpdateCheckResult = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdate(
+        currentVersionName: String,
+        channel: UpdateChannel = UpdateChannel.STABLE
+    ): UpdateCheckResult = withContext(Dispatchers.IO) {
         try {
-            val connection = (URL(LATEST_RELEASE_API_URL).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(RELEASES_API_URL).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/vnd.github+json")
                 connectTimeout = 10_000
@@ -66,32 +70,53 @@ object UpdateChecker {
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             connection.disconnect()
 
-            val release = try {
-                JSONObject(body)
+            val releases = try {
+                JSONArray(body)
             } catch (e: Exception) {
                 return@withContext UpdateCheckResult.Error("Couldn't read release info")
             }
 
-            val latestTag = release.optString("tag_name").ifBlank { null }
-                ?: return@withContext UpdateCheckResult.Error("Couldn't read release info")
+            val newest = pickNewestRelease(releases, channel)
+                ?: return@withContext UpdateCheckResult.UpToDate(VersionUtils.display(currentVersionName))
 
-            val latestVersion = latestTag.removePrefix("v").removePrefix("V")
-            val current = currentVersionName.removePrefix("v").removePrefix("V")
-
-            if (isNewerVersion(latestVersion, current)) {
+            val latestTag = newest.optString("tag_name")
+            if (VersionUtils.isRemoteNewer(latestTag, currentVersionName)) {
                 UpdateCheckResult.UpdateAvailable(
-                    currentVersion = currentVersionName,
-                    latestVersion = latestTag,
-                    releaseUrl = RELEASES_PAGE_URL,
-                    apkDownloadUrl = extractApkAssetUrl(release),
-                    changelog = parseChangelog(release.optString("body"))
+                    currentVersion = VersionUtils.display(currentVersionName),
+                    latestVersion = VersionUtils.display(latestTag),
+                    releaseUrl = newest.optString("html_url").ifBlank { RELEASES_PAGE_URL },
+                    apkDownloadUrl = extractApkAssetUrl(newest),
+                    changelog = parseChangelog(newest.optString("body"))
                 )
             } else {
-                UpdateCheckResult.UpToDate(currentVersionName)
+                UpdateCheckResult.UpToDate(VersionUtils.display(currentVersionName))
             }
         } catch (e: Exception) {
             UpdateCheckResult.Error(e.message ?: "Update check failed")
         }
+    }
+
+    /**
+     * Highest-version release the [channel] may offer. Drafts and tags that
+     * aren't versions are ignored; Stable additionally skips pre-releases
+     * and canary tags. Releases without an APK are skipped too, so the
+     * updater never offers something it can't install.
+     */
+    private fun pickNewestRelease(releases: JSONArray, channel: UpdateChannel): JSONObject? {
+        var best: JSONObject? = null
+        var bestVersion: AppVersion? = null
+        for (i in 0 until releases.length()) {
+            val release = releases.optJSONObject(i) ?: continue
+            if (release.optBoolean("draft")) continue
+            val version = VersionUtils.parse(release.optString("tag_name")) ?: continue
+            if (channel == UpdateChannel.STABLE && (release.optBoolean("prerelease") || version.isCanary)) continue
+            if (extractApkAssetUrl(release) == null) continue
+            if (bestVersion == null || version > bestVersion) {
+                best = release
+                bestVersion = version
+            }
+        }
+        return best
     }
 
     /**
@@ -155,6 +180,8 @@ object UpdateChecker {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .filterNot { it.startsWith("#") }
+            // Canary releases open with a "> [!IMPORTANT] ... testing build" warning blockquote.
+            .filterNot { it.startsWith(">") }
             .filterNot { it.contains("Full Changelog", ignoreCase = true) }
             .filterNot { it.startsWith("http", ignoreCase = true) }
             .map { line -> line.removePrefix("- ").removePrefix("* ").removePrefix("• ").trim() }
@@ -162,18 +189,5 @@ object UpdateChecker {
             .filter { it.isNotEmpty() }
             .take(3)
             .toList()
-    }
-
-    /** Compares dot-separated numeric version strings, e.g. "1.10.2" > "1.9.0". */
-    private fun isNewerVersion(latest: String, current: String): Boolean {
-        val latestParts = latest.split(".").mapNotNull { it.toIntOrNull() }
-        val currentParts = current.split(".").mapNotNull { it.toIntOrNull() }
-        val maxLength = maxOf(latestParts.size, currentParts.size)
-        for (i in 0 until maxLength) {
-            val l = latestParts.getOrElse(i) { 0 }
-            val c = currentParts.getOrElse(i) { 0 }
-            if (l != c) return l > c
-        }
-        return false
     }
 }
