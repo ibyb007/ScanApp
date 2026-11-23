@@ -189,6 +189,8 @@ class MainActivity : ComponentActivity() {
 
     private var collagePickerPages by mutableStateOf<List<com.example.scanapp.ui.CollagePickerPage>>(emptyList())
     private var isSavingCollage by mutableStateOf(false)
+    private var collageInitialPageIds by mutableStateOf<List<Long>>(emptyList())
+    private var collageReturnScreen by mutableStateOf(Screen.HOME)
 
     private var isBackupActive by mutableStateOf(false)
     private var backupStatusMessage by mutableStateOf<String?>(null)
@@ -358,7 +360,7 @@ class MainActivity : ComponentActivity() {
                         Screen.IMAGE_PREVIEW -> Screen.DETAIL
                         Screen.SCAN_EXPORT -> if (openDocumentId != null) Screen.DETAIL else Screen.HOME
                         Screen.SETTINGS -> Screen.HOME
-                        Screen.COLLAGE -> Screen.HOME
+                        Screen.COLLAGE -> collageReturnScreen
                         Screen.BACKUP -> Screen.HOME
                         Screen.HOME -> Screen.HOME
                     }
@@ -451,7 +453,13 @@ class MainActivity : ComponentActivity() {
                                 onDeletePage = { page -> deletePageFromOpenDocument(documentId, page) },
                                 onReorder = { orderedIds -> reorderOpenDocumentPages(documentId, orderedIds) },
                                 onExportSelected = { selectedPages -> openExportScreenForSelectedPages(selectedPages) },
-                                onEditSelected = { selectedPages -> launchPagesEditViaMlKit(documentId, selectedPages) }
+                                onEditSelected = { selectedPages -> launchPagesEditViaMlKit(documentId, selectedPages) },
+                                onCollageSelected = { selectedPages ->
+                                    openCollageScreen(
+                                        initialPageIds = selectedPages.map { it.pageId },
+                                        returnTo = Screen.DETAIL
+                                    )
+                                }
                             )
                         }
                     }
@@ -532,7 +540,8 @@ class MainActivity : ComponentActivity() {
                     Screen.COLLAGE -> com.example.scanapp.ui.CollageScreen(
                         allPages = collagePickerPages,
                         isSaving = isSavingCollage,
-                        onBackClick = { currentScreen = Screen.HOME },
+                        initialPageIds = collageInitialPageIds,
+                        onBackClick = { currentScreen = collageReturnScreen },
                         onSaveClick = { layout, pageSize, orientation, pages ->
                             saveCollageAsNewDocument(layout, pageSize, orientation, pages)
                         },
@@ -846,16 +855,37 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openCollageScreen() {
+    /**
+     * Opens the collage editor. [initialPageIds] pre-fills it (used by the
+     * document view's "Collage" action); [returnTo] is where Back goes.
+     */
+    private fun openCollageScreen(
+        initialPageIds: List<Long> = emptyList(),
+        returnTo: Screen = Screen.HOME
+    ) {
         lifecycleScope.launch {
             val pages = withContext(Dispatchers.IO) { repository.getAllPagesForPicker() }
-            collagePickerPages = pages.map { withTitle ->
-                com.example.scanapp.ui.CollagePickerPage(
-                    pageId = withTitle.page.id,
-                    uri = File(withTitle.page.filePath).toUri(),
-                    documentTitle = withTitle.documentTitle
-                )
+            collagePickerPages = withContext(Dispatchers.IO) {
+                pages.map { withTitle ->
+                    // Read just the image header so collage frames can match each
+                    // picture's own proportions (no stretching).
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(withTitle.page.filePath, bounds)
+                    val aspect = if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                        bounds.outWidth.toFloat() / bounds.outHeight.toFloat()
+                    } else {
+                        0.75f
+                    }
+                    com.example.scanapp.ui.CollagePickerPage(
+                        pageId = withTitle.page.id,
+                        uri = File(withTitle.page.filePath).toUri(),
+                        documentTitle = withTitle.documentTitle,
+                        aspectRatio = aspect
+                    )
+                }
             }
+            collageInitialPageIds = initialPageIds
+            collageReturnScreen = returnTo
             isSavingCollage = false
             currentScreen = Screen.COLLAGE
         }
