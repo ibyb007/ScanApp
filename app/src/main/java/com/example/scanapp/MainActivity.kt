@@ -111,12 +111,33 @@ private val DarkColors = darkColorScheme(
     onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFC6C5D0)
 )
 
+// Pure-black variant of the dark scheme for OLED screens: true #000000 backgrounds,
+// near-black (not grey) containers so cards and the glass nav stay distinguishable.
+private val AmoledColors = DarkColors.copy(
+    background = androidx.compose.ui.graphics.Color.Black,
+    surface = androidx.compose.ui.graphics.Color.Black,
+    surfaceDim = androidx.compose.ui.graphics.Color.Black,
+    surfaceBright = androidx.compose.ui.graphics.Color(0xFF1F1F23),
+    surfaceContainerLowest = androidx.compose.ui.graphics.Color.Black,
+    surfaceContainerLow = androidx.compose.ui.graphics.Color(0xFF0A0A0C),
+    surfaceContainer = androidx.compose.ui.graphics.Color(0xFF101013),
+    surfaceContainerHigh = androidx.compose.ui.graphics.Color(0xFF161619),
+    surfaceContainerHighest = androidx.compose.ui.graphics.Color(0xFF1C1C20),
+    surfaceVariant = androidx.compose.ui.graphics.Color(0xFF1F1F24),
+    outlineVariant = androidx.compose.ui.graphics.Color(0xFF2A2A30)
+)
+
 @Composable
 fun ScanAppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    amoled: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColors else LightColors
+    val colorScheme = when {
+        darkTheme && amoled -> AmoledColors
+        darkTheme -> DarkColors
+        else -> LightColors
+    }
     MaterialTheme(
         colorScheme = colorScheme,
         content = content
@@ -154,6 +175,8 @@ class MainActivity : ComponentActivity() {
     // choice, persisted via ThemePreferences so it survives app restarts
     // instead of reverting to auto.
     private var darkThemeOverride by mutableStateOf<Boolean?>(null)
+    // Pure-black AMOLED variant of the forced-dark theme (persisted via ThemePreferences).
+    private var amoledTheme by mutableStateOf(false)
     private var scannedPages by mutableStateOf<List<Uri>>(emptyList())
     private var isExporting by mutableStateOf(false)
     private var exportResultText by mutableStateOf<String?>(null)
@@ -250,6 +273,7 @@ class MainActivity : ComponentActivity() {
         autoInstallUpdates = com.example.scanapp.update.UpdatePreferences.isAutoInstallEnabled(applicationContext)
         updateChannel = com.example.scanapp.update.UpdatePreferences.getUpdateChannel(applicationContext)
         darkThemeOverride = com.example.scanapp.ui.ThemePreferences.getDarkOverride(applicationContext)
+        amoledTheme = com.example.scanapp.ui.ThemePreferences.isAmoled(applicationContext) && darkThemeOverride == true
         navBarGlassOpacity = com.example.scanapp.ui.NavBarPreferences.getGlassOpacity(applicationContext)
         homeSortBy = com.example.scanapp.data.SortPreferences.getSortBy(applicationContext)
         homeSortDirection = com.example.scanapp.data.SortPreferences.getSortDirection(applicationContext)
@@ -362,7 +386,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            ScanAppTheme(darkTheme = effectiveDarkTheme) {
+            ScanAppTheme(darkTheme = effectiveDarkTheme, amoled = amoledTheme && darkThemeOverride == true) {
                 val themeRevealState = rememberThemeRevealState()
                 val themeRevealLayer = rememberGraphicsLayer()
                 val themeRevealScope = rememberCoroutineScope()
@@ -439,19 +463,23 @@ class MainActivity : ComponentActivity() {
                         onSettingsClick = { currentScreen = Screen.SETTINGS },
                         onToolsClick = { openCollageScreen() },
                         onBackupClick = { currentScreen = Screen.BACKUP },
-                        themeMode = darkThemeOverride.toThemeMode(),
+                        themeMode = if (amoledTheme && darkThemeOverride == true) ThemeMode.AMOLED else darkThemeOverride.toThemeMode(),
                         listState = homeListState,
                         navBarGlassOpacity = navBarGlassOpacity,
                         onThemeModeSelected = { newMode, tapCenter ->
                             val newOverride = newMode.toDarkOverride()
                             val newEffectiveDarkTheme = newOverride ?: systemDarkTheme
+                            val newAmoled = newMode == ThemeMode.AMOLED
 
                             val persistAndApply: () -> Unit = {
                                 darkThemeOverride = newOverride
+                                amoledTheme = newAmoled
                                 com.example.scanapp.ui.ThemePreferences.setDarkOverride(applicationContext, newOverride)
+                                com.example.scanapp.ui.ThemePreferences.setAmoled(applicationContext, newAmoled)
                             }
 
-                            if (newEffectiveDarkTheme != effectiveDarkTheme) {
+                            val oldAmoled = amoledTheme && darkThemeOverride == true
+                            if (newEffectiveDarkTheme != effectiveDarkTheme || newAmoled != oldAmoled) {
                                 // Appearance is actually changing — play the reveal.
                                 themeRevealState.trigger(
                                     scope = themeRevealScope,
