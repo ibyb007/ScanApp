@@ -633,6 +633,8 @@ class MainActivity : ComponentActivity() {
                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
+                    // This was missing: without the backdrop the nav silently fell back to a plain tint (no blur).
+                    CompositionLocalProvider(com.example.scanapp.ui.LocalGlassBackdrop provides glassBackdrop) {
                     com.example.scanapp.ui.ScanAppBottomNav(
                         selectedIndex = navIndex,
                         glassOpacity = navBarGlassOpacity,
@@ -642,6 +644,7 @@ class MainActivity : ComponentActivity() {
                         onSettingsClick = { currentScreen = Screen.SETTINGS },
                         modifier = Modifier.onGloballyPositioned { floatingNavHeightPx = it.size.height }
                     )
+                    }
                 }
                 }
                 }
