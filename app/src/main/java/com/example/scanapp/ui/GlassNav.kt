@@ -60,7 +60,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Outline
+import kotlin.math.exp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -188,7 +192,40 @@ fun Modifier.liquidGlass(
             )
         )
         .dropletDepth(if (isDark) 1f else 0.35f)
-        .border(1.dp, Brush.linearGradient(rim), shape)
+        .edgeLight(shape, strength = if (isDark) 1f else 0.7f)
+        .border(0.75.dp, Brush.linearGradient(rim), shape)
+}
+
+/**
+ * Edge light, after Nuvio's floating nav pill: light catching the glass rim.
+ *  - a crisp ~0.75dp specular line hugging the edge, brightest along the top and fading toward the bottom
+ *  - a soft inner glow that falls off quickly into the glass (same exp(-0.0565d - 0.0322d²) falloff as
+ *    Nuvio's shader, built from a few stacked strokes clipped to the shape)
+ * Drawn behind the content, so icons and labels stay crisp. Call after the surface is clipped / filled.
+ */
+private fun Modifier.edgeLight(shape: Shape, strength: Float = 1f): Modifier = this.drawWithCache {
+    val outline = shape.createOutline(size, layoutDirection, this)
+    // brighter on top (light from above), weak at the bottom — Nuvio's upperLight 0.18..1.0
+    fun vertical(alpha: Float) = Brush.verticalGradient(
+        0f to Color.White.copy(alpha = alpha),
+        0.45f to Color.White.copy(alpha = alpha * 0.30f),
+        1f to Color.White.copy(alpha = alpha * 0.18f)
+    )
+    val glowDepthsDp = floatArrayOf(1.5f, 3f, 5f, 8f, 12f)
+    val glow = glowDepthsDp.map { d ->
+        val falloff = exp(-0.0565f * d - 0.0322f * d * d)
+        Triple(d.dp.toPx() * 2f, vertical(0.16f * falloff * strength), d)
+    }
+    val specular = vertical(0.60f * strength)
+    val specWidth = 0.75.dp.toPx()
+    onDrawBehind {
+        // inner glow: widest first so the strongest light sits right on the edge
+        for (i in glow.indices.reversed()) {
+            val (w, brush, _) = glow[i]
+            drawOutline(outline, brush, style = Stroke(width = w))
+        }
+        drawOutline(outline, specular, style = Stroke(width = specWidth * 2f))
+    }
 }
 
 /** Fake 3D volume, drawn behind the content: edges that darken as they curve away and a shadowed lower belly. */
