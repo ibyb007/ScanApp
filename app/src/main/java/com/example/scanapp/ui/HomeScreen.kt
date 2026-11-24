@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -379,6 +380,7 @@ fun HomeScreen(
                                     when (themeMode) {
                                         ThemeMode.AUTO -> Icons.Filled.BrightnessAuto
                                         ThemeMode.DARK -> Icons.Filled.DarkMode
+                                        ThemeMode.AMOLED -> Icons.Filled.DarkMode
                                         ThemeMode.LIGHT -> Icons.Filled.LightMode
                                     },
                                     contentDescription = "Day/night mode"
@@ -564,6 +566,9 @@ private fun ThemeMenu(
         }
         ThemeMenuItem("Dark", Icons.Filled.DarkMode, current == ThemeMode.DARK) {
             onSelect(ThemeMode.DARK)
+        }
+        ThemeMenuItem("AMOLED black", Icons.Filled.Contrast, current == ThemeMode.AMOLED) {
+            onSelect(ThemeMode.AMOLED)
         }
         ThemeMenuItem("Auto (system default)", Icons.Filled.BrightnessAuto, current == ThemeMode.AUTO) {
             onSelect(ThemeMode.AUTO)
