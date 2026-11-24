@@ -678,93 +678,26 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showUpdateAvailableDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showUpdateAvailableDialog = false },
-                        title = { Text("Update available") },
-                        text = {
-                            Column {
-                                Text("Version $startupUpdateVersion is available.")
-                                if (startupUpdateChangelog.isNotEmpty()) {
-                                    Spacer(Modifier.height(10.dp))
-                                    Text(
-                                        "What's new",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                    startupUpdateChangelog.forEach { entry ->
-                                        Row(modifier = Modifier.padding(vertical = 1.dp)) {
-                                            Text(
-                                                "•  ",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Text(
-                                                entry,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
+                    com.example.scanapp.ui.UpdateGlassSlab(
+                        version = startupUpdateVersion,
+                        changelog = startupUpdateChangelog,
+                        isDownloading = isDownloadingUpdate,
+                        downloadedBytes = updateDownloadedBytes,
+                        totalBytes = updateTotalBytes,
+                        errorMessage = updateDownloadError,
+                        canInstallInApp = latestApkDownloadUrl != null,
+                        onUpdate = {
+                            val apkUrl = latestApkDownloadUrl
+                            if (apkUrl != null) {
+                                downloadAndLaunchInstall(apkUrl)
+                            } else {
+                                latestReleaseUrl?.let { url ->
+                                    startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
                                 }
-                                if (isDownloadingUpdate) {
-                                    Spacer(Modifier.height(12.dp))
-                                    val total = updateTotalBytes
-                                    if (total > 0) {
-                                        val progress = (updateDownloadedBytes.toFloat() / total.toFloat())
-                                            .coerceIn(0f, 1f)
-                                        LinearProgressIndicator(
-                                            progress = { progress },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        Spacer(Modifier.height(4.dp))
-                                        Text(
-                                            "${formatUpdateBytes(updateDownloadedBytes)} / " +
-                                                "${formatUpdateBytes(total)}  (${(progress * 100).toInt()}%)"
-                                        )
-                                    } else {
-                                        // No Content-Length from the server — show an
-                                        // indeterminate bar rather than a fake percentage.
-                                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                                        Spacer(Modifier.height(4.dp))
-                                        Text("Downloading… ${formatUpdateBytes(updateDownloadedBytes)}")
-                                    }
-                                }
-                                updateDownloadError?.let { error ->
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        "Download failed: $error",
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
+                                showUpdateAvailableDialog = false
                             }
                         },
-                        confirmButton = {
-                            TextButton(
-                                enabled = !isDownloadingUpdate,
-                                onClick = {
-                                    val apkUrl = latestApkDownloadUrl
-                                    if (apkUrl != null) {
-                                        downloadAndLaunchInstall(apkUrl)
-                                    } else {
-                                        latestReleaseUrl?.let { url ->
-                                            startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
-                                        }
-                                        showUpdateAvailableDialog = false
-                                    }
-                                }
-                            ) {
-                                Text(if (latestApkDownloadUrl != null) "Update" else "View release")
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(
-                                enabled = !isDownloadingUpdate,
-                                onClick = { showUpdateAvailableDialog = false }
-                            ) {
-                                Text("Later")
-                            }
-                        }
+                        onLater = { showUpdateAvailableDialog = false }
                     )
                 }
             }
