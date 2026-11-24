@@ -179,6 +179,7 @@ class MainActivity : ComponentActivity() {
     private var amoledTheme by mutableStateOf(false)
     private var scannedPages by mutableStateOf<List<Uri>>(emptyList())
     private var isExporting by mutableStateOf(false)
+    private var isSharingScan by mutableStateOf(false)
     private var exportResultText by mutableStateOf<String?>(null)
     private var isImportingPdf by mutableStateOf(false)
     private var pdfImportError by mutableStateOf<String?>(null)
@@ -546,6 +547,8 @@ class MainActivity : ComponentActivity() {
                         exportResultText = exportResultText,
                         onScanClick = { scannerLauncher.launch() },
                         onExportClick = { uiState -> runExport(uiState) },
+                        onShareClick = { uiState -> runShare(uiState) },
+                        isSharing = isSharingScan,
                         onBackClick = {
                             currentScreen = if (openDocumentId != null) Screen.DETAIL else Screen.HOME
                         },
@@ -1615,6 +1618,98 @@ class MainActivity : ComponentActivity() {
                     }
                     startActivity(Intent.createChooser(sendIntent, "Share document"))
                 }
+            }
+        }
+    }
+
+    /**
+     * Like [runExport] — same format, quality / size cap, resolution and DPI — but the result goes to a
+     * temporary cache file and straight into the system share sheet; nothing is saved to Documents.
+     */
+    private fun runShare(uiState: ExportUiState) {
+        if (scannedPages.isEmpty() || isSharingScan || isExporting) return
+        isSharingScan = true
+        exportResultText = null
+
+        lifecycleScope.launch {
+            try {
+                val shareDir = File(cacheDir, "share_scratch").apply { mkdirs() }
+                val targetBytes = uiState.sizeLimitBytes
+
+                val files = withContext(Dispatchers.IO) {
+                    // drop whatever an earlier share left behind
+                    shareDir.listFiles()?.forEach { it.delete() }
+                    val stamp = System.currentTimeMillis()
+                    val baseName = if (uiState.fileName.isNotBlank()) {
+                        uiState.fileName.replace(Regex("[^A-Za-z0-9_-]"), "_")
+                    } else {
+                        "scan_$stamp"
+                    }
+                    when (uiState.format) {
+                        OutputFormat.PDF -> {
+                            val outFile = File(shareDir, "$baseName.pdf")
+                            exportEngine.exportAsPdf(
+                                pageUris = scannedPages,
+                                targetSizeBytes = targetBytes,
+                                outputFile = outFile,
+                                strategy = uiState.compressionStrategy
+                            )
+                            listOf(outFile)
+                        }
+                        OutputFormat.JPEG, OutputFormat.PNG -> {
+                            val ext = if (uiState.format == OutputFormat.PNG) "png" else "jpg"
+                            scannedPages.mapIndexedNotNull { index, uri ->
+                                val bitmap = contentResolver.openInputStream(uri)?.use {
+                                    BitmapFactory.decodeStream(it)
+                                } ?: return@mapIndexedNotNull null
+                                val (out, _) = exportEngine.compressImage(
+                                    bitmap,
+                                    ExportOptions(
+                                        format = uiState.format,
+                                        targetSizeBytes = targetBytes,
+                                        quality = uiState.quality,
+                                        targetWidth = uiState.customWidth,
+                                        targetHeight = uiState.customHeight,
+                                        strategy = uiState.compressionStrategy
+                                    )
+                                )
+                                val outFile = File(shareDir, "${baseName}_page${index + 1}.$ext")
+                                outFile.writeBytes(out.toByteArray())
+                                uiState.dpi?.let { dpi -> exportEngine.writeDpi(outFile, dpi) }
+                                outFile
+                            }
+                        }
+                    }
+                }
+                if (files.isEmpty()) {
+                    exportResultText = "Export failed: nothing to share"
+                    return@launch
+                }
+
+                val uris = files.map {
+                    FileProvider.getUriForFile(this@MainActivity, "com.example.scanapp.fileprovider", it)
+                }
+                val mime = when (uiState.format) {
+                    OutputFormat.PDF -> "application/pdf"
+                    OutputFormat.PNG -> "image/png"
+                    OutputFormat.JPEG -> "image/jpeg"
+                }
+                val sendIntent = if (uris.size == 1) {
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = mime
+                        putExtra(Intent.EXTRA_STREAM, uris.first())
+                    }
+                } else {
+                    Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                        type = mime
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                    }
+                }.apply { addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                startActivity(Intent.createChooser(sendIntent, "Share"))
+            } catch (e: Exception) {
+                exportResultText = "Export failed: ${e.message}"
+            } finally {
+                isSharingScan = false
             }
         }
     }
