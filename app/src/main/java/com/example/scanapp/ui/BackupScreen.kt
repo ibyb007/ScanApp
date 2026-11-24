@@ -116,8 +116,8 @@ fun BackupScreen(
         }
     }
 
-    var navBarHeightPx by remember { mutableStateOf(0) }
-    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+    // The floating glass nav now lives in MainActivity (see GlassNav.kt); pad content by its height.
+    val navBarHeightDp = LocalFloatingNavHeight.current
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
@@ -374,17 +374,6 @@ fun BackupScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-            ScanAppBottomNav(
-                selectedIndex = 2,
-                onHomeClick = onHomeClick,
-                onToolsClick = onToolsClick,
-                onSettingsClick = onSettingsClick,
-                onBackupClick = {},
-                glassOpacity = navBarGlassOpacity,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .onGloballyPositioned { navBarHeightPx = it.size.height }
-            )
         }
     }
 }
