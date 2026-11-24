@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -62,6 +63,9 @@ fun ScanScreen(
     exportResultText: String?,
     onScanClick: () -> Unit,
     onExportClick: (ExportUiState) -> Unit,
+    /** Shares the result with the current settings via the system share sheet, without saving it. */
+    onShareClick: (ExportUiState) -> Unit = {},
+    isSharing: Boolean = false,
     onBackClick: () -> Unit = {},
     initialUiState: ExportUiState = ExportUiState(),
     initialUseSizeLimit: Boolean = true,
@@ -192,21 +196,41 @@ fun ScanScreen(
             containerColor = Color.Transparent,
             floatingActionButton = {
                 if (scannedPages.isNotEmpty()) {
-                    ExtendedFloatingActionButton(
-                        onClick = { if (!isExporting) onExportClick(uiState) },
-                        icon = {
-                            if (isExporting) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Filled.IosShare, contentDescription = null)
-                            }
-                        },
-                        text = { Text(if (isExporting) "Exporting…" else "Export") },
-                        expanded = !isExporting,
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier
-                            .imePadding() // Automatically forces button upward when keyboard opens
-                            .padding(bottom = 76.dp) // Pushes floating button to your exact targeted arrow height when idle
-                    )
+                            .imePadding() // Automatically forces buttons upward when keyboard opens
+                            .padding(bottom = 76.dp) // Pushes floating buttons to your exact targeted arrow height when idle
+                    ) {
+                        // Share: same settings as Export, but hands the file straight to the share sheet (nothing saved).
+                        ExtendedFloatingActionButton(
+                            onClick = { if (!isExporting && !isSharing) onShareClick(uiState) },
+                            icon = {
+                                if (isSharing) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Filled.Share, contentDescription = null)
+                                }
+                            },
+                            text = { Text(if (isSharing) "Preparing…" else "Share") },
+                            expanded = !isSharing,
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        ExtendedFloatingActionButton(
+                            onClick = { if (!isExporting && !isSharing) onExportClick(uiState) },
+                            icon = {
+                                if (isExporting) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Filled.IosShare, contentDescription = null)
+                                }
+                            },
+                            text = { Text(if (isExporting) "Exporting…" else "Export") },
+                            expanded = !isExporting
+                        )
+                    }
                 }
             }
         ) { padding ->
