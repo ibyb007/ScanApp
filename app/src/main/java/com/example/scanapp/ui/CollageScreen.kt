@@ -287,12 +287,10 @@ fun CollageScreen(
 
     val hasAnyAssignedPage = pages.any { page -> page.frames.any { it.pageId != null } }
 
-    // ScanAppBottomNav is overlaid on the content Box below instead of
-    // living in Scaffold's bottomBar slot — see HomeScreen for why. The
-    // editor Column reserves this much bottom space for it so the fixed
+    // The editor Column reserves the floating nav's height so the fixed
     // CollageBottomDock toolbar still sits fully above the pill.
-    var navBarHeightPx by remember { mutableStateOf(0) }
-    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+    // The floating glass nav now lives in MainActivity (see GlassNav.kt); pad content by its height.
+    val navBarHeightDp = LocalFloatingNavHeight.current
 
     Scaffold(
         // See HomeScreen: stop Scaffold from painting an opaque
@@ -376,19 +374,6 @@ fun CollageScreen(
                 )
             }
 
-            // Overlaid on top of the editor content instead of reserved via
-            // Scaffold's bottomBar — see HomeScreen for the reasoning.
-            ScanAppBottomNav(
-                selectedIndex = 1,
-                onHomeClick = onHomeClick,
-                onToolsClick = {},
-                onBackupClick = onBackupClick,
-                onSettingsClick = onSettingsClick,
-                glassOpacity = navBarGlassOpacity,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .onGloballyPositioned { navBarHeightPx = it.size.height }
-            )
         }
     }
 
