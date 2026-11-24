@@ -257,7 +257,7 @@ fun SettingsScreen(
     }
 }
 
-/** "Update channel" setting: Stable / Canary chips with a one-line explanation of the selected one. */
+/** "Update channel" setting: Stable / Canary chips. */
 @Composable
 private fun UpdateChannelRow(
     selected: UpdateChannel,
@@ -266,24 +266,13 @@ private fun UpdateChannelRow(
     ListItem(
         headlineContent = { Text("Update channel") },
         supportingContent = {
-            Column {
-                Text(
-                    when (selected) {
-                        UpdateChannel.STABLE ->
-                            "Only fully released versions. Switching from Canary keeps your current build until a newer stable release is out."
-                        UpdateChannel.CANARY ->
-                            "Early test builds (shown as 1.3.4 (2)) plus stable releases. May contain bugs."
-                    }
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    UpdateChannel.values().forEach { channel ->
-                        FilterChip(
-                            selected = channel == selected,
-                            onClick = { onSelected(channel) },
-                            label = { Text(channel.title) }
-                        )
-                    }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                UpdateChannel.values().forEach { channel ->
+                    FilterChip(
+                        selected = channel == selected,
+                        onClick = { onSelected(channel) },
+                        label = { Text(channel.title) }
+                    )
                 }
             }
         },
