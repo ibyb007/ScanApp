@@ -73,10 +73,8 @@ fun SettingsScreen(
     onToolsClick: () -> Unit = {},
     onBackupClick: () -> Unit = {}
 ) {
-    // ScanAppBottomNav is overlaid on the content Box below instead of
-    // living in Scaffold's bottomBar slot — see HomeScreen for why.
-    var navBarHeightPx by remember { mutableStateOf(0) }
-    val navBarHeightDp = with(LocalDensity.current) { navBarHeightPx.toDp() }
+    // The floating glass nav now lives in MainActivity (see GlassNav.kt); pad content by its height.
+    val navBarHeightDp = LocalFloatingNavHeight.current
 
     Scaffold(
         // See HomeScreen: stop Scaffold from painting an opaque
@@ -234,9 +232,9 @@ fun SettingsScreen(
             Spacer(Modifier.height(4.dp))
 
             // Bottom Navbar Glass Opacity — controls how see-through the
-            // liquid glass bottom nav (ScanAppBottomNav) reads on every
-            // screen it appears on: Home, Tools, Backup, and this screen.
-            // Lower = more transparent/frosted, higher = more solid.
+            // liquid glass bottom nav reads, and how strongly it blurs the
+            // content behind it (Android 12+). Lower = clearer and sharper,
+            // higher = more solid and more blurred.
             NavBarGlassOpacityRow(
                 opacity = navBarGlassOpacity,
                 onOpacityChange = onNavBarGlassOpacityChange
@@ -255,19 +253,6 @@ fun SettingsScreen(
             DeveloperInfoSection()
         }
 
-        // Overlaid on top of the scrolled content instead of reserved via
-        // Scaffold's bottomBar — see HomeScreen for the reasoning.
-        ScanAppBottomNav(
-            selectedIndex = 3,
-            onHomeClick = onHomeClick,
-            onToolsClick = onToolsClick,
-            onBackupClick = onBackupClick,
-            onSettingsClick = {},
-            glassOpacity = navBarGlassOpacity,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .onGloballyPositioned { navBarHeightPx = it.size.height }
-        )
         }
     }
 }
@@ -364,6 +349,11 @@ private fun NavBarGlassOpacityRow(
 ) {
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
         Text("Bottom Navbar Glass Opacity", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "Also sets how much the bar blurs what's behind it",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Slider(
                 value = opacity,
