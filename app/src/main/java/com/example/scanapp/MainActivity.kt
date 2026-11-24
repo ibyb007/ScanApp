@@ -9,7 +9,13 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +34,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import com.example.scanapp.ui.LocalFloatingNavHeight
+import com.example.scanapp.ui.glassBackdropSource
+import com.example.scanapp.ui.rememberGlassBackdrop
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -380,6 +391,29 @@ class MainActivity : ComponentActivity() {
                 // which would otherwise forget the scroll position.
                 val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
 
+                // One floating glass nav for every top-level screen, drawn above them so its lens can
+                // spring between tabs as you navigate. The screens are recorded as the "backdrop" the
+                // glass blurs; each screen pads its content by the nav's height (LocalFloatingNavHeight).
+                val glassBackdrop = rememberGlassBackdrop()
+                val showFloatingNav = currentScreen == Screen.HOME || currentScreen == Screen.COLLAGE ||
+                    currentScreen == Screen.BACKUP || currentScreen == Screen.SETTINGS
+                var lastNavIndex by remember { mutableStateOf(0) }
+                val navIndex = when (currentScreen) {
+                    Screen.HOME -> 0
+                    Screen.COLLAGE -> 1
+                    Screen.BACKUP -> 2
+                    Screen.SETTINGS -> 3
+                    else -> lastNavIndex // keep the lens where it was while the nav slides away
+                }
+                SideEffect { lastNavIndex = navIndex }
+                var floatingNavHeightPx by remember { mutableStateOf(0) }
+                val floatingNavHeightDp = with(LocalDensity.current) { floatingNavHeightPx.toDp() }
+
+                Box(Modifier.fillMaxSize()) {
+                CompositionLocalProvider(
+                    LocalFloatingNavHeight provides (if (showFloatingNav) floatingNavHeightDp else 0.dp)
+                ) {
+                Box(Modifier.fillMaxSize().glassBackdropSource(glassBackdrop)) {
                 when (currentScreen) {
                     Screen.HOME -> HomeScreen(
                         recentDocuments = recentDocuments,
@@ -584,6 +618,29 @@ class MainActivity : ComponentActivity() {
                         onToolsClick = { openCollageScreen() },
                         onSettingsClick = { currentScreen = Screen.SETTINGS },
                         navBarGlassOpacity = navBarGlassOpacity
+                    )
+                }
+                }
+                }
+                }
+
+                AnimatedVisibility(
+                    visible = showFloatingNav,
+                    enter = slideInVertically(
+                        animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 400f),
+                        initialOffsetY = { it }
+                    ) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                ) {
+                    com.example.scanapp.ui.ScanAppBottomNav(
+                        selectedIndex = navIndex,
+                        glassOpacity = navBarGlassOpacity,
+                        onHomeClick = { currentScreen = Screen.HOME },
+                        onToolsClick = { openCollageScreen() },
+                        onBackupClick = { currentScreen = Screen.BACKUP },
+                        onSettingsClick = { currentScreen = Screen.SETTINGS },
+                        modifier = Modifier.onGloballyPositioned { floatingNavHeightPx = it.size.height }
                     )
                 }
                 }
