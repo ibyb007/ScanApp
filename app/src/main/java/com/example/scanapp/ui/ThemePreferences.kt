@@ -6,6 +6,8 @@ import android.content.Context
 enum class ThemeMode {
     LIGHT,
     DARK,
+    /** Dark theme with true-black (#000000) backgrounds, so OLED pixels switch off. */
+    AMOLED,
     /** Follow the system day/night setting — the default until the person picks otherwise. */
     AUTO
 }
@@ -13,7 +15,7 @@ enum class ThemeMode {
 /** Maps a [ThemeMode] to the nullable override format ThemePreferences persists. */
 fun ThemeMode.toDarkOverride(): Boolean? = when (this) {
     ThemeMode.LIGHT -> false
-    ThemeMode.DARK -> true
+    ThemeMode.DARK, ThemeMode.AMOLED -> true
     ThemeMode.AUTO -> null
 }
 
@@ -48,6 +50,7 @@ object ThemePreferences {
 
     private const val PREFS_NAME = "theme_prefs"
     private const val KEY_DARK_OVERRIDE = "dark_theme_override"
+    private const val KEY_AMOLED = "amoled_black"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -57,6 +60,13 @@ object ThemePreferences {
         val p = prefs(context)
         if (!p.contains(KEY_DARK_OVERRIDE)) return null
         return p.getBoolean(KEY_DARK_OVERRIDE, false)
+    }
+
+    /** True when the person picked the pure-black AMOLED theme (only meaningful together with a dark override). */
+    fun isAmoled(context: Context): Boolean = prefs(context).getBoolean(KEY_AMOLED, false)
+
+    fun setAmoled(context: Context, amoled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_AMOLED, amoled).apply()
     }
 
     /** Pass null to clear the override and go back to following the system setting. */
