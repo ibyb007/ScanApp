@@ -35,6 +35,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -165,7 +169,8 @@ fun CollageScreen(
     var selectedLayout by remember { mutableStateOf(initialLayout) }
     var selectedPageSize by remember { mutableStateOf(CollagePageSize.A4) }
     var selectedOrientation by remember { mutableStateOf(CollageOrientation.PORTRAIT) }
-    var activeTab by remember { mutableStateOf(CollageDockTab.PAGE) }
+    var showLayoutSheet by remember { mutableStateOf(false) }
+    var showSizeSheet by remember { mutableStateOf(false) }
 
     var pages by remember {
         mutableStateOf(
@@ -287,15 +292,14 @@ fun CollageScreen(
 
     val hasAnyAssignedPage = pages.any { page -> page.frames.any { it.pageId != null } }
 
-    // The editor Column reserves the floating nav's height so the fixed
-    // CollageBottomDock toolbar still sits fully above the pill.
-    // The floating glass nav now lives in MainActivity (see GlassNav.kt); pad content by its height.
+    // The floating glass nav lives in MainActivity (see GlassNav.kt); pad content by its height.
     val navBarHeightDp = LocalFloatingNavHeight.current
+    // Space under the page reserved for the floating glass "assign pages" bar.
+    val bottomBarReserve = 72.dp
 
     Scaffold(
-        // See HomeScreen: stop Scaffold from painting an opaque
-        // system-bar-height strip behind the floating bottom nav pill.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
             CollageTopBar(
                 onBackClick = onBackClick,
@@ -309,71 +313,72 @@ fun CollageScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
+                .padding(bottom = navBarHeightDp)
         ) {
-            Column(
+            CollagePageCanvas(
+                page = pages.getOrNull(currentPageIndex) ?: emptyPage(selectedLayout),
+                canvasAspect = canvasAspect,
+                pageById = pageById,
+                selectedFrameIndex = selectedFrameIndex,
+                onFrameTap = { index ->
+                    val frame = pages.getOrNull(currentPageIndex)?.frames?.getOrNull(index)
+                    selectedFrameIndex = index
+                    if (frame?.pageId == null) showPagePicker = true
+                },
+                onBackgroundTap = { selectedFrameIndex = null },
+                onFrameChange = { index, frame -> updateFrame(index, frame) },
+                onFrameClear = { index -> clearFrame(index) },
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = navBarHeightDp)
+                    .padding(bottom = bottomBarReserve)
+            )
+
+            CollagePageNavigator(
+                currentIndex = currentPageIndex,
+                total = pages.size,
+                onPrevious = { goToPage(currentPageIndex - 1) },
+                onNext = { goToPage(currentPageIndex + 1) },
+                onAddPage = { addBlankPage() },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 10.dp)
+            )
+
+            // Floating layout / dimensions buttons
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 14.dp, bottom = bottomBarReserve + 14.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) {
-                    CollagePageCanvas(
-                        page = pages.getOrNull(currentPageIndex) ?: emptyPage(selectedLayout),
-                        canvasAspect = canvasAspect,
-                        pageById = pageById,
-                        selectedFrameIndex = selectedFrameIndex,
-                        onFrameTap = { index ->
-                            val frame = pages.getOrNull(currentPageIndex)?.frames?.getOrNull(index)
-                            selectedFrameIndex = index
-                            if (frame?.pageId == null) showPagePicker = true
-                        },
-                        onBackgroundTap = { selectedFrameIndex = null },
-                        onFrameChange = { index, frame -> updateFrame(index, frame) },
-                        onFrameClear = { index -> clearFrame(index) },
-                        modifier = Modifier.fillMaxSize()
-                    )
-
-                    CollagePageNavigator(
-                        currentIndex = currentPageIndex,
-                        total = pages.size,
-                        onPrevious = { goToPage(currentPageIndex - 1) },
-                        onNext = { goToPage(currentPageIndex + 1) },
-                        onAddPage = { addBlankPage() },
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(8.dp)
-                    )
-
-                    SnackbarHost(
-                        hostState = snackbarHostState,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(8.dp)
+                GlassFab(onClick = { showLayoutSheet = true }, contentDescription = "Layout") {
+                    Icon(Icons.Filled.ViewModule, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+                GlassFab(onClick = { showSizeSheet = true }, contentDescription = "Dimensions") {
+                    Text(
+                        selectedPageSize.displayName,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
                     )
                 }
-
-                CollageBottomDock(
-                    activeTab = activeTab,
-                    onTabChange = { activeTab = it },
-                    selectedLayout = selectedLayout,
-                    onLayoutChange = { resizePagesForLayout(it) },
-                    selectedPageSize = selectedPageSize,
-                    selectedOrientation = selectedOrientation,
-                    onPageSizeChange = { applyCanvasChange(it, selectedOrientation) },
-                    onOrientationToggle = {
-                        applyCanvasChange(
-                            selectedPageSize,
-                            if (selectedOrientation == CollageOrientation.PORTRAIT) CollageOrientation.LANDSCAPE else CollageOrientation.PORTRAIT
-                        )
-                    },
-                    onAddPagesClick = { showPagePicker = true },
-                    glassOpacity = navBarGlassOpacity
-                )
             }
 
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = bottomBarReserve + 8.dp)
+            )
+
+            AssignPagesGlassBar(
+                onClick = { showPagePicker = true },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
         }
     }
 
@@ -382,6 +387,22 @@ fun CollageScreen(
             allPages = allPages,
             onPickPage = { pageId -> assignPickedPage(pageId) },
             onDismiss = { showPagePicker = false }
+        )
+    }
+    if (showLayoutSheet) {
+        LayoutSheet(
+            selectedLayout = selectedLayout,
+            onLayoutChange = { resizePagesForLayout(it) },
+            onDismiss = { showLayoutSheet = false }
+        )
+    }
+    if (showSizeSheet) {
+        DimensionsSheet(
+            selectedPageSize = selectedPageSize,
+            selectedOrientation = selectedOrientation,
+            onPageSizeChange = { applyCanvasChange(it, selectedOrientation) },
+            onOrientationChange = { applyCanvasChange(selectedPageSize, it) },
+            onDismiss = { showSizeSheet = false }
         )
     }
 }
@@ -427,13 +448,18 @@ private fun CollageTopBar(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = onSaveClick, enabled = canSave) {
+            FilledTonalButton(
+                onClick = onSaveClick,
+                enabled = canSave,
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                modifier = Modifier.padding(end = 8.dp).height(36.dp)
+            ) {
                 if (isSaving) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
-                    Icon(Icons.Filled.Check, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Save")
+                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Save", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -453,25 +479,26 @@ private fun CollagePageNavigator(
 ) {
     Row(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+            .glassSurface(RoundedCornerShape(24.dp))
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onPrevious, enabled = currentIndex > 0, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous page", tint = Color.White)
+            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous page", tint = MaterialTheme.colorScheme.onSurface)
         }
         Text(
             "${currentIndex + 1} / $total",
             style = MaterialTheme.typography.labelLarge,
-            color = Color.White
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
         )
         IconButton(onClick = onNext, enabled = currentIndex < total - 1, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Filled.ChevronRight, contentDescription = "Next page", tint = Color.White)
+            Icon(Icons.Filled.ChevronRight, contentDescription = "Next page", tint = MaterialTheme.colorScheme.onSurface)
         }
         TextButton(onClick = onAddPage, contentPadding = PaddingValues(horizontal = 8.dp)) {
-            Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(2.dp))
-            Text("Page", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            Text("Page", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -495,11 +522,11 @@ private fun CollagePageCanvas(
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
-        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerLowest)
     ) {
         val availableWidth = maxWidth.value
         val availableHeight = maxHeight.value
-        val fill = 0.94f
+        val fill = 0.985f
         val pageWidthDp: Float
         val pageHeightDp: Float
         if (availableWidth / availableHeight > canvasAspect) {
@@ -516,8 +543,8 @@ private fun CollagePageCanvas(
             modifier = Modifier
                 .offset(x = originX.dp, y = originY.dp)
                 .size(width = pageWidthDp.dp, height = pageHeightDp.dp)
-                .background(Color.White)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                .shadow(6.dp, RoundedCornerShape(2.dp), clip = false)
+                .background(Color.White, RoundedCornerShape(2.dp))
         )
 
         // Tap on empty space deselects the current frame.
@@ -780,141 +807,210 @@ private fun FrameHandle(
     }
 }
 
+/** Frosted-glass surface: soft shadow, tinted translucent fill, top-light gradient and a hairline rim. */
 @Composable
-private fun CollageBottomDock(
-    activeTab: CollageDockTab,
-    onTabChange: (CollageDockTab) -> Unit,
-    selectedLayout: CollageLayout,
-    onLayoutChange: (CollageLayout) -> Unit,
-    selectedPageSize: CollagePageSize,
-    selectedOrientation: CollageOrientation,
-    onPageSizeChange: (CollagePageSize) -> Unit,
-    onOrientationToggle: () -> Unit,
-    onAddPagesClick: () -> Unit,
-    glassOpacity: Float = NavBarPreferences.DEFAULT_GLASS_OPACITY
-) {
-    Column(
-        modifier = Modifier
+private fun Modifier.glassSurface(shape: androidx.compose.ui.graphics.Shape): Modifier {
+    val base = MaterialTheme.colorScheme.surfaceContainerHigh
+    return this
+        .shadow(10.dp, shape, ambientColor = Color.Black.copy(alpha = 0.25f), spotColor = Color.Black.copy(alpha = 0.25f))
+        .clip(shape)
+        .background(base.copy(alpha = 0.72f))
+        .background(
+            Brush.verticalGradient(
+                listOf(Color.White.copy(alpha = 0.14f), Color.White.copy(alpha = 0.03f))
+            )
+        )
+        .border(
+            1.dp,
+            Brush.verticalGradient(
+                listOf(Color.White.copy(alpha = 0.35f), Color.White.copy(alpha = 0.06f))
+            ),
+            shape
+        )
+}
+
+/** Glass call-to-action strip at the bottom of the editor. */
+@Composable
+private fun AssignPagesGlassBar(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(28.dp)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = modifier
             .fillMaxWidth()
-            .cleanGlassBackground(
-                tint = MaterialTheme.colorScheme.surfaceContainer,
-                opacity = glassOpacity
-            )
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-            )
+            .height(56.dp)
+            .glassSurface(shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp)
     ) {
-        when (activeTab) {
-            CollageDockTab.PAGE -> {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    TextButton(onClick = onAddPagesClick) {
-                        Icon(Icons.Filled.InsertPageBreak, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Tap Here to Assign Document Pages")
-                    }
-                }
-            }
-            CollageDockTab.TEMPLATE -> {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    rowItems(CollageLayouts.ALL, key = { it.id }) { layout ->
-                        FilterChip(
-                            selected = layout.id == selectedLayout.id,
-                            onClick = { onLayoutChange(layout) },
-                            label = { Text(layout.displayName) }
-                        )
-                    }
-                }
-            }
-            CollageDockTab.SIZE -> {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    rowItems(CollagePageSize.values().toList(), key = { it.name }) { size ->
-                        FilterChip(
-                            selected = size == selectedPageSize,
-                            onClick = { onPageSizeChange(size) },
-                            label = { Text(size.displayName) }
-                        )
-                    }
-                    item {
-                        FilterChip(
-                            selected = false,
-                            onClick = onOrientationToggle,
-                            leadingIcon = {
-                                Icon(
-                                    if (selectedOrientation == CollageOrientation.PORTRAIT) Icons.Filled.CropPortrait else Icons.Filled.CropLandscape,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            label = {
-                                Text(if (selectedOrientation == CollageOrientation.PORTRAIT) "Portrait" else "Landscape")
-                            }
-                        )
-                    }
-                }
-            }
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(34.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), CircleShape)
+        ) {
+            Icon(
+                Icons.Filled.InsertPageBreak,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
         }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            "Tap here to assign document pages",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1
+        )
+    }
+}
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+/** Round glass floating button with an optional caption underneath the icon. */
+@Composable
+private fun GlassFab(
+    onClick: () -> Unit,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .size(52.dp)
+            .glassSurface(CircleShape)
+            .clickable(onClick = onClick)
+            .semantics { this.contentDescription = contentDescription }
+    ) { content() }
+}
 
-        Row(modifier = Modifier.fillMaxWidth()) {
-            DockTabButton(
-                label = "Page Pool",
-                selected = activeTab == CollageDockTab.PAGE,
-                onClick = { onTabChange(CollageDockTab.PAGE) },
-                modifier = Modifier.weight(1f),
-                icon = { tint -> Icon(Icons.Filled.InsertPageBreak, contentDescription = "Page Pool", tint = tint) }
-            )
-            DockTabButton(
-                label = "Layout",
-                selected = activeTab == CollageDockTab.TEMPLATE,
-                onClick = { onTabChange(CollageDockTab.TEMPLATE) },
-                modifier = Modifier.weight(1f),
-                icon = { tint -> Icon(Icons.Filled.ViewModule, contentDescription = "Layout", tint = tint) }
-            )
-            DockTabButton(
-                label = "Dimensions",
-                selected = activeTab == CollageDockTab.SIZE,
-                onClick = { onTabChange(CollageDockTab.SIZE) },
-                modifier = Modifier.weight(1f),
-                icon = { tint ->
-                    Text(
-                        "A4",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = tint
-                    )
-                }
+@Composable
+private fun LayoutPreview(layout: CollageLayout, selected: Boolean) {
+    val rects = remember(layout.id) {
+        CollageDefaultArrangement.ratesFor(layout.picturesPerPage, layout.gridCols, layout.gridRows)
+    }
+    val fill = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    androidx.compose.foundation.Canvas(modifier = Modifier.size(width = 40.dp, height = 54.dp)) {
+        val pad = 3.dp.toPx()
+        val w = size.width - pad * 2
+        val h = size.height - pad * 2
+        rects.forEach { r ->
+            drawRoundRect(
+                color = fill,
+                topLeft = androidx.compose.ui.geometry.Offset(pad + r.left * w + 1.5f, pad + r.top * h + 1.5f),
+                size = androidx.compose.ui.geometry.Size(
+                    (r.width() * w - 3f).coerceAtLeast(2f),
+                    (r.height() * h - 3f).coerceAtLeast(2f)
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx())
             )
         }
     }
 }
 
 @Composable
-private fun DockTabButton(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    icon: @Composable (Color) -> Unit
+private fun LayoutSheet(
+    selectedLayout: CollageLayout,
+    onLayoutChange: (CollageLayout) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(
-        modifier = modifier.clickable(onClick = onClick).padding(vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        icon(tint)
-        Spacer(Modifier.height(2.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(bottom = 28.dp)) {
+            Text(
+                "Layout",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                rowItems(CollageLayouts.ALL, key = { it.id }) { layout ->
+                    val selected = layout.id == selectedLayout.id
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                else MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
+                            .border(
+                                if (selected) 1.5.dp else 0.dp,
+                                MaterialTheme.colorScheme.primary,
+                                RoundedCornerShape(16.dp)
+                            )
+                            .clickable { onLayoutChange(layout); onDismiss() }
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        LayoutPreview(layout, selected)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            layout.displayName,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DimensionsSheet(
+    selectedPageSize: CollagePageSize,
+    selectedOrientation: CollageOrientation,
+    onPageSizeChange: (CollagePageSize) -> Unit,
+    onOrientationChange: (CollageOrientation) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(bottom = 28.dp)) {
+            Text(
+                "Page size",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                rowItems(CollagePageSize.values().toList(), key = { it.name }) { size ->
+                    FilterChip(
+                        selected = size == selectedPageSize,
+                        onClick = { onPageSizeChange(size) },
+                        label = { Text(size.displayName) }
+                    )
+                }
+            }
+            Text(
+                "Orientation",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp)
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 16.dp)
+            ) {
+                FilterChip(
+                    selected = selectedOrientation == CollageOrientation.PORTRAIT,
+                    onClick = { onOrientationChange(CollageOrientation.PORTRAIT) },
+                    leadingIcon = { Icon(Icons.Filled.CropPortrait, null, Modifier.size(18.dp)) },
+                    label = { Text("Portrait") }
+                )
+                FilterChip(
+                    selected = selectedOrientation == CollageOrientation.LANDSCAPE,
+                    onClick = { onOrientationChange(CollageOrientation.LANDSCAPE) },
+                    leadingIcon = { Icon(Icons.Filled.CropLandscape, null, Modifier.size(18.dp)) },
+                    label = { Text("Landscape") }
+                )
+            }
+        }
     }
 }
 
@@ -978,5 +1074,3 @@ private fun PickerThumbnail(page: CollagePickerPage, onClick: () -> Unit) {
         }
     }
 }
-
-private enum class CollageDockTab { PAGE, TEMPLATE, SIZE }
